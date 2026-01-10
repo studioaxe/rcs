@@ -4,7 +4,6 @@ on:
   schedule:
     # Executa a cada 6 horas (0:00, 6:00, 12:00, 18:00 UTC)
     - cron: '0 0,6,12,18 * * *'
-  # Permite execução manual
   workflow_dispatch:
     inputs:
       triggered_by:
@@ -18,13 +17,22 @@ on:
         default: ''
         type: string
 
+# 🔑 PERMISSÕES - FIX PARA ERRO 403 (NOVO em v4.1)
+permissions:
+  contents: write
+
 jobs:
   sync-calendars:
     runs-on: ubuntu-latest
+    
+    # 🔑 VARIÁVEIS DE AMBIENTE (NOVO em v4.1)
+    env:
+      GH_PAT: ${{ secrets.GH_TOKEN }}
 
     steps:
-      # ==================== SETUP ====================
 
+      # ==================== SETUP ====================
+      
       - name: 📥 Checkout Repository
         uses: actions/checkout@v4
 
@@ -39,7 +47,7 @@ jobs:
           pip install icalendar requests python-dotenv pytz
 
       # ==================== SINCRONIZAÇÃO ====================
-
+      
       - name: 🔄 Run Calendar Sync
         id: sync
         env:
@@ -57,7 +65,7 @@ jobs:
         continue-on-error: true
 
       # ==================== UPLOAD ====================
-
+      
       - name: 📤 Upload master_calendar.ics to GitHub
         if: steps.sync.outcome == 'success'
         uses: actions/upload-artifact@v4
@@ -74,13 +82,16 @@ jobs:
           path: sync.log
           retention-days: 30
 
-      # ==================== GIT COMMIT ====================
-
-      - name: 🔧 Configure Git
+      # ==================== GIT COMMIT (FIX v4.1) ====================
+      
+      - name: 🔧 Configure Git + Set Remote with Token
         if: steps.sync.outcome == 'success'
         run: |
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
+          # 🔑 USAR TOKEN PESSOAL (FIX para 403)
+          git remote set-url origin https://x-access-token:${GH_PAT}@github.com/${{ github.repository }}.git
+          echo "✅ Git remote configured with PAT"
 
       - name: 📝 Commit and Push master_calendar.ics
         if: steps.sync.outcome == 'success'
@@ -91,27 +102,24 @@ jobs:
             echo "❌ ERRO: Ficheiro master_calendar.ics não encontrado!"
             exit 1
           fi
-          
+
           ls -lh master_calendar.ics
           echo ""
-          
           echo "=== Git Status ==="
           git status
           echo ""
-          
           echo "=== Adicionando ficheiro ==="
           git add master_calendar.ics
-          
           echo "=== Git Diff ==="
           git diff --cached master_calendar.ics | head -20
           echo ""
-          
           echo "=== Fazendo commit ==="
+
           if git commit -m "🗓️ Auto-sync: master_calendar.ics atualizado - $(date '+%d/%m/%Y %H:%M:%S') - Disparado por: ${{ github.event.inputs.triggered_by || 'schedule' }}"; then
             echo "✅ Commit realizado com sucesso"
-            
             echo ""
             echo "=== Fazendo push ==="
+
             if git push origin main; then
               echo "✅ Push realizado com sucesso"
               echo "commit_status=success" >> $GITHUB_OUTPUT
@@ -121,12 +129,12 @@ jobs:
               exit 1
             fi
           else
-            echo "⚠️  Nenhuma mudança para commit (ficheiro já estava atualizado)"
+            echo "⚠️ Nenhuma mudança para commit (ficheiro já estava atualizado)"
             echo "commit_status=no_changes" >> $GITHUB_OUTPUT
           fi
 
       # ==================== PREPARAR VARIÁVEIS PARA EMAIL ====================
-
+      
       - name: 📅 Set Date/Timestamp Variables
         id: datetime
         if: steps.sync.outcome == 'success'
@@ -136,7 +144,7 @@ jobs:
           echo "run_url=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> $GITHUB_OUTPUT
 
       # ==================== EMAIL SUCESSO ====================
-
+      
       - name: 📧 Send Success Email
         if: steps.sync.outcome == 'success' && steps.git_commit.outputs.commit_status == 'success'
         uses: dawidd6/action-send-mail@v3
@@ -176,7 +184,7 @@ jobs:
             Próximo passo: Aguardar sincronização automática das plataformas de reserva
 
       # ==================== EMAIL ERRO ====================
-
+      
       - name: 📅 Set Date/Timestamp Variables (Error)
         id: datetime_error
         if: failure()
@@ -207,16 +215,12 @@ jobs:
 
             🔗 Link: ${{ steps.datetime_error.outputs.run_url }}
 
-            📋 Verifique o log para detalhes:
-
-            ---LOG---
-            $(cat sync.log 2>/dev/null || echo "Log não disponível")
-            ---END---
+            📋 Verifique o link para detalhes:
 
             ⚠️ Ação necessária: Verifique o log da execução
 
       # ==================== ESTATÍSTICAS ====================
-
+      
       - name: 📈 Log Statistics
         if: always()
         run: |
