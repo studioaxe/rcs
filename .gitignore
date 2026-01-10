@@ -1,32 +1,48 @@
-# Virtualenvs
-venv/
-.env/
-.venv/
-
-# Ficheiro de ambiente real
-.env
-*.env.local
-*.env.*.local
-
 # Python
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
-*.sqlite3
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Logs
-logs/
-*.log
+# Virtualenvs
+venv/
+env/
+ENV/
 
-# IDE / editor
-.vscode/
-.idea/
-*.iml
-
-# Sistema
-.DS_Store
-Thumbs.db
+# .env e segredos
+.env
+.env.local
+.env.*.local
 
 # Ficheiros gerados
-*.pyc
+*.ics
+cookies.txt
+data/
+*.log
+sync.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
