@@ -1,0 +1,235 @@
+name: Rental Calendar Sync - Full Auto (6h)
+
+on:
+  schedule:
+    # Executa a cada 6 horas (0:00, 6:00, 12:00, 18:00 UTC)
+    - cron: '0 0,6,12,18 * * *'
+  # Permite execução manual
+  workflow_dispatch:
+    inputs:
+      triggered_by:
+        description: 'Usuario que disparou a sincronizacao'
+        required: false
+        default: 'auto'
+        type: string
+      timestamp:
+        description: 'Timestamp da requisicao'
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  sync-calendars:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ==================== SETUP ====================
+
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: 📦 Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install icalendar requests python-dotenv pytz
+
+      # ==================== SINCRONIZAÇÃO ====================
+
+      - name: 🔄 Run Calendar Sync
+        id: sync
+        env:
+          AIRBNB_ICAL_URL: ${{ secrets.AIRBNB_ICAL_URL }}
+          BOOKING_ICAL_URL: ${{ secrets.BOOKING_ICAL_URL }}
+          VRBO_ICAL_URL: ${{ secrets.VRBO_ICAL_URL }}
+          BUFFER_DAYS_BEFORE: 1
+          BUFFER_DAYS_AFTER: 1
+          OUTPUT_FILE: master_calendar.ics
+          EMAIL_ON_ERROR: 'true'
+          ERROR_EMAIL: ${{ secrets.ERROR_EMAIL }}
+        run: |
+          python scripts/sync_calendars.py
+          echo "sync_status=success" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      # ==================== UPLOAD ====================
+
+      - name: 📤 Upload master_calendar.ics to GitHub
+        if: steps.sync.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: master_calendar
+          path: master_calendar.ics
+          retention-days: 30
+
+      - name: 📊 Upload sync.log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync_logs
+          path: sync.log
+          retention-days: 30
+
+      # ==================== GIT COMMIT ====================
+
+      - name: 🔧 Configure Git
+        if: steps.sync.outcome == 'success'
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+
+      - name: 📝 Commit and Push master_calendar.ics
+        if: steps.sync.outcome == 'success'
+        id: git_commit
+        run: |
+          echo "=== Verificando ficheiro ==="
+          if [ ! -f master_calendar.ics ]; then
+            echo "❌ ERRO: Ficheiro master_calendar.ics não encontrado!"
+            exit 1
+          fi
+          
+          ls -lh master_calendar.ics
+          echo ""
+          
+          echo "=== Git Status ==="
+          git status
+          echo ""
+          
+          echo "=== Adicionando ficheiro ==="
+          git add master_calendar.ics
+          
+          echo "=== Git Diff ==="
+          git diff --cached master_calendar.ics | head -20
+          echo ""
+          
+          echo "=== Fazendo commit ==="
+          if git commit -m "🗓️ Auto-sync: master_calendar.ics atualizado - $(date '+%d/%m/%Y %H:%M:%S') - Disparado por: ${{ github.event.inputs.triggered_by || 'schedule' }}"; then
+            echo "✅ Commit realizado com sucesso"
+            
+            echo ""
+            echo "=== Fazendo push ==="
+            if git push origin main; then
+              echo "✅ Push realizado com sucesso"
+              echo "commit_status=success" >> $GITHUB_OUTPUT
+            else
+              echo "❌ ERRO: Push falhou"
+              echo "commit_status=push_failed" >> $GITHUB_OUTPUT
+              exit 1
+            fi
+          else
+            echo "⚠️  Nenhuma mudança para commit (ficheiro já estava atualizado)"
+            echo "commit_status=no_changes" >> $GITHUB_OUTPUT
+          fi
+
+      # ==================== PREPARAR VARIÁVEIS PARA EMAIL ====================
+
+      - name: 📅 Set Date/Timestamp Variables
+        id: datetime
+        if: steps.sync.outcome == 'success'
+        run: |
+          echo "current_date=$(date '+%d/%m/%Y às %H:%M:%S')" >> $GITHUB_OUTPUT
+          echo "current_timestamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
+          echo "run_url=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> $GITHUB_OUTPUT
+
+      # ==================== EMAIL SUCESSO ====================
+
+      - name: 📧 Send Success Email
+        if: steps.sync.outcome == 'success' && steps.git_commit.outputs.commit_status == 'success'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.EMAIL_SERVER }}
+          server_port: ${{ secrets.EMAIL_PORT }}
+          username: ${{ secrets.EMAIL_USER }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: '✅ Sincronização Calendários Completa'
+          to: ${{ secrets.NOTIFICATION_EMAIL }}
+          from: ${{ secrets.EMAIL_USER }}
+          body: |
+            Sincronização de calendários concluída com sucesso!
+
+            ✅ Status: OK
+
+            📅 Data: ${{ steps.datetime.outputs.current_date }}
+
+            ⏰ Timestamp: ${{ steps.datetime.outputs.current_timestamp }}
+
+            📊 Eventos processados:
+            • Airbnb: ✅
+            • Booking: ✅
+            • Vrbo: ✅
+
+            📁 Ficheiro Atualizado no Repositório
+
+            🔗 Link do Repositório:
+            ${{ github.server_url }}/${{ github.repository }}
+
+            📋 Detalhes da Execução:
+            Run ID: ${{ github.run_id }}
+            Branch: main
+            Commit: ${{ github.sha }}
+            Disparado por: ${{ github.event.inputs.triggered_by || 'schedule' }}
+
+            Próximo passo: Aguardar sincronização automática das plataformas de reserva
+
+      # ==================== EMAIL ERRO ====================
+
+      - name: 📅 Set Date/Timestamp Variables (Error)
+        id: datetime_error
+        if: failure()
+        run: |
+          echo "current_date=$(date '+%d/%m/%Y às %H:%M:%S')" >> $GITHUB_OUTPUT
+          echo "current_timestamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
+          echo "run_url=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> $GITHUB_OUTPUT
+
+      - name: 📧 Send Error Email
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.EMAIL_SERVER }}
+          server_port: ${{ secrets.EMAIL_PORT }}
+          username: ${{ secrets.EMAIL_USER }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: '❌ Erro na Sincronização Calendários'
+          to: ${{ secrets.NOTIFICATION_EMAIL }}
+          from: ${{ secrets.EMAIL_USER }}
+          body: |
+            Erro detectado na sincronização de calendários!
+
+            ❌ Status: ERRO
+
+            📅 Data: ${{ steps.datetime_error.outputs.current_date }}
+
+            ⏰ Timestamp: ${{ steps.datetime_error.outputs.current_timestamp }}
+
+            🔗 Link: ${{ steps.datetime_error.outputs.run_url }}
+
+            📋 Verifique o log para detalhes:
+
+            ---LOG---
+            $(cat sync.log 2>/dev/null || echo "Log não disponível")
+            ---END---
+
+            ⚠️ Ação necessária: Verifique o log da execução
+
+      # ==================== ESTATÍSTICAS ====================
+
+      - name: 📈 Log Statistics
+        if: always()
+        run: |
+          echo "=== SINCRONIZAÇÃO STATISTICS ==="
+          echo "Data/Hora: $(date '+%d/%m/%Y %H:%M:%S')"
+          echo "Status: ${{ steps.sync.outcome }}"
+          echo "Git Commit Status: ${{ steps.git_commit.outputs.commit_status }}"
+          echo "Run ID: ${{ github.run_id }}"
+          echo "Disparado por: ${{ github.event.inputs.triggered_by || 'schedule' }}"
+          echo ""
+          echo "=== LOG SUMMARY ==="
+          tail -20 sync.log || echo "Sem log disponível"
+          echo ""
+          echo "=== FICHEIROS GERADOS ==="
+          ls -lh master_calendar.ics 2>/dev/null || echo "Sem ficheiro ICS"
+          ls -lh sync.log 2>/dev/null || echo "Sem sync.log"
