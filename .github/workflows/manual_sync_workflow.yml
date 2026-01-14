@@ -104,3 +104,4 @@ jobs:
           echo " • import_calendar.ics"
           echo " • master_calendar.ics"
           echo " • manual_calendar.ics (se aplicável)"
+"# v5.1" 
