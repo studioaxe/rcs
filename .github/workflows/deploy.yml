@@ -1,7 +1,18 @@
-name: Deploy to Production
+name: Deploy v5.0 to Render
+
 on:
   push:
     branches: [main]
+
 jobs:
   deploy:
-    runs-on
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Deploy to Render
+        uses: johnbeynon/render-deploy-action@v0.0.6
+        with:
+          service-id: ${{ secrets.RENDER_SERVICE_ID }}
+          api-token: ${{ secrets.RENDER_API_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
