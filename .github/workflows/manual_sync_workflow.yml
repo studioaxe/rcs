@@ -46,24 +46,35 @@ jobs:
           VRBO_CALENDAR_URL: ${{ secrets.VRBO_ICAL_URL }}
         run: |
           echo "Sincronizando calendarios..."
-          cat > .env << EOF
-          AIRBNB_CALENDAR_URL=${AIRBNB_CALENDAR_URL}
-          BOOKING_CALENDAR_URL=${BOOKING_CALENDAR_URL}
-          VRBO_CALENDAR_URL=${VRBO_CALENDAR_URL}
-          EOF
-          echo "[OK] .env criado na raiz"
-          cat > backend/.env << EOF
-          AIRBNB_CALENDAR_URL=${AIRBNB_CALENDAR_URL}
-          BOOKING_CALENDAR_URL=${BOOKING_CALENDAR_URL}
-          VRBO_CALENDAR_URL=${VRBO_CALENDAR_URL}
-          EOF
-          echo "[OK] .env criado em backend/"
-          echo "[OK] Exportando variáveis globais..."
-          export AIRBNB_CALENDAR_URL="${AIRBNB_CALENDAR_URL}"
-          export BOOKING_CALENDAR_URL="${BOOKING_CALENDAR_URL}"
-          export VRBO_CALENDAR_URL="${VRBO_CALENDAR_URL}"
-          echo "[OK] Executando sync.py com variáveis de ambiente..."
-          cd backend && AIRBNB_CALENDAR_URL="${AIRBNB_CALENDAR_URL}" BOOKING_CALENDAR_URL="${BOOKING_CALENDAR_URL}" VRBO_CALENDAR_URL="${VRBO_CALENDAR_URL}" python sync.py
+          python3 << 'PYTHON_SCRIPT'
+          import os
+          import subprocess
+          
+          # Injetar variáveis de ambiente
+          os.environ['AIRBNB_CALENDAR_URL'] = os.environ.get('AIRBNB_CALENDAR_URL', '')
+          os.environ['BOOKING_CALENDAR_URL'] = os.environ.get('BOOKING_CALENDAR_URL', '')
+          os.environ['VRBO_CALENDAR_URL'] = os.environ.get('VRBO_CALENDAR_URL', '')
+          
+          # Criar .env
+          env_content = f"""AIRBNB_CALENDAR_URL={os.environ.get('AIRBNB_CALENDAR_URL', '')}
+          BOOKING_CALENDAR_URL={os.environ.get('BOOKING_CALENDAR_URL', '')}
+          VRBO_CALENDAR_URL={os.environ.get('VRBO_CALENDAR_URL', '')}"""
+          
+          with open('.env', 'w') as f:
+              f.write(env_content)
+          
+          with open('backend/.env', 'w') as f:
+              f.write(env_content)
+          
+          print("[OK] .env criado em raiz e backend/")
+          
+          # Executar sync.py com variáveis
+          result = subprocess.run(
+              ['python', 'backend/sync.py'],
+              env=os.environ.copy()
+          )
+          exit(result.returncode)
+          PYTHON_SCRIPT
 
       - name: Step 2/3 - Verificar calendarios
         run: |
