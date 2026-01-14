@@ -17,6 +17,11 @@ jobs:
   manual-sync:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    
+    env:
+      AIRBNB_CALENDAR_URL: ${{ secrets.AIRBNB_CALENDAR_URL }}
+      BOOKING_CALENDAR_URL: ${{ secrets.BOOKING_CALENDAR_URL }}
+      VRBO_CALENDAR_URL: ${{ secrets.VRBO_CALENDAR_URL }}
 
     steps:
       - name: Checkout repository
