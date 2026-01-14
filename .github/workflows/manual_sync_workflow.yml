@@ -52,7 +52,20 @@ jobs:
           VRBO_CALENDAR_URL=${VRBO_CALENDAR_URL}
           EOF
           echo "[DEBUG] Ficheiro .env criado:"
+          ls -la .env
+          echo "[DEBUG] Conteudo do .env:"
           cat .env
+          echo "[DEBUG] Variaveis de ambiente:"
+          echo "AIRBNB_CALENDAR_URL: $AIRBNB_CALENDAR_URL"
+          echo "BOOKING_CALENDAR_URL: $BOOKING_CALENDAR_URL"
+          echo "VRBO_CALENDAR_URL: $VRBO_CALENDAR_URL"
+          echo "[DEBUG] Python path:"
+          which python
+          python --version
+          echo "[DEBUG] Diretorio atual:"
+          pwd
+          ls -la
+          echo "[DEBUG] Executando sync.py..."
           python backend/sync.py
 
       - name: Step 2/3 - Verificar calendarios
