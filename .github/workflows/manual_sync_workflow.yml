@@ -42,9 +42,9 @@ jobs:
       - name: Create .env file with secrets
         run: |
           cat > .env << EOF
-          AIRBNB_ICAL_URL=${{ secrets.AIRBNB_CALENDAR_URL }}
-          BOOKING_ICAL_URL=${{ secrets.BOOKING_CALENDAR_URL }}
-          VRBO_ICAL_URL=${{ secrets.VRBO_CALENDAR_URL }}
+          AIRBNB_CALENDAR_URL=${{ secrets.AIRBNB_ICAL_URL }}
+          BOOKING_CALENDAR_URL=${{ secrets.BOOKING_ICAL_URL }}
+          VRBO_CALENDAR_URL=${{ secrets.VRBO_ICAL_URL }}
           EOF
 
       - name: Step 1/3 - Sincronizar calendarios
