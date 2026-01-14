@@ -58,8 +58,12 @@ jobs:
           VRBO_CALENDAR_URL=${VRBO_CALENDAR_URL}
           EOF
           echo "[OK] .env criado em backend/"
-          echo "[OK] Executando sync.py..."
-          python backend/sync.py
+          echo "[OK] Exportando variáveis globais..."
+          export AIRBNB_CALENDAR_URL="${AIRBNB_CALENDAR_URL}"
+          export BOOKING_CALENDAR_URL="${BOOKING_CALENDAR_URL}"
+          export VRBO_CALENDAR_URL="${VRBO_CALENDAR_URL}"
+          echo "[OK] Executando sync.py com variáveis de ambiente..."
+          cd backend && AIRBNB_CALENDAR_URL="${AIRBNB_CALENDAR_URL}" BOOKING_CALENDAR_URL="${BOOKING_CALENDAR_URL}" VRBO_CALENDAR_URL="${VRBO_CALENDAR_URL}" python sync.py
 
       - name: Step 2/3 - Verificar calendarios
         run: |
