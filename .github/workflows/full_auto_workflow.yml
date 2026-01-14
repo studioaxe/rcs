@@ -57,7 +57,7 @@ jobs:
           EMAIL_ON_ERROR: 'true'
           ERROR_EMAIL: ${{ secrets.ERROR_EMAIL }}
         run: |
-          python sync.py
+          python backend/sync.py
           echo "sync_status=success" >> $GITHUB_OUTPUT
         continue-on-error: true
 
