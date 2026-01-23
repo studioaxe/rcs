@@ -52,7 +52,7 @@ jobs:
           VRBO_ICAL_URL: ${{ secrets.VRBO_ICAL_URL }}
         run: |
           echo "Sincronizando calendarios..."
-          python backend/sync.py
+          python sync.py
 
       - name: Step 2/3 - Verificar calendarios
         run: |
