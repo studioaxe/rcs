@@ -1,0 +1,19 @@
+# Core web
+Flask==3.1.0
+Flask-Cors==5.0.0
+gunicorn==23.0.0
+
+# Calendários / datas
+icalendar==6.1.0
+pytz==2024.2
+
+# HTTP e .env
+requests==2.32.3
+python-dotenv==1.0.1
+
+# Email (smtplib é standard library; não precisa de extra)
+
+# Utilitários
+itsdangerous==2.2.0
+Jinja2==3.1.4
+Werkzeug==3.1.3
