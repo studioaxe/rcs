@@ -3,7 +3,6 @@
 
 """
 main.py - Rental Calendar Sync - Flask API
-
 Versão: 1.0 Final
 Data: 01 de fevereiro de 2026
 Desenvolvido por: PBrandão
@@ -135,33 +134,60 @@ def git_commit_push(files: List[str], message: str) -> bool:
         logger.info('GIT: Identidade configurada')
         
         # VERIFICAR E CONFIGURAR REMOTE ORIGIN
+        github_token = os.getenv('GITHUB_TOKEN')
+        github_owner = os.getenv('GITHUB_OWNER')
+        github_repo = os.getenv('GITHUB_REPO')
+        
+        logger.info(f'GIT: Verificando configuração - OWNER={github_owner}, REPO={github_repo}, TOKEN={"***" if github_token else "None"}')
+        
         try:
             result = subprocess.run(
                 ['git', 'remote', 'get-url', 'origin'],
                 cwd=str(REPO_PATH),
                 capture_output=True,
-                timeout=10
+                timeout=10,
+                check=False
             )
-            logger.info(f'GIT: Remote origin já configurado: {result.stdout.decode().strip()}')
+            
+            if result.returncode == 0:
+                current_url = result.stdout.decode().strip()
+                logger.info(f'GIT: Remote origin existente: {current_url}')
+                
+                # Se o remote existe mas não tem autenticação, atualizar
+                if github_token and github_owner and github_repo and '@github.com' not in current_url:
+                    repo_url = f'https://{github_token}@github.com/{github_owner}/{github_repo}.git'
+                    logger.info('GIT: Atualizando remote origin com token de autenticação')
+                    subprocess.run(
+                        ['git', 'remote', 'set-url', 'origin', repo_url],
+                        cwd=str(REPO_PATH),
+                        check=True,
+                        capture_output=True,
+                        timeout=10
+                    )
+                    logger.info('GIT: Remote origin atualizado com autenticação')
+            else:
+                raise subprocess.CalledProcessError(result.returncode, result.args)
+                
         except subprocess.CalledProcessError:
             # Remote não existe, tentar configurar
-            github_token = os.getenv('GITHUB_TOKEN')
-            github_owner = os.getenv('GITHUB_OWNER')
-            github_repo = os.getenv('GITHUB_REPO')
-            
             if github_token and github_owner and github_repo:
                 repo_url = f'https://{github_token}@github.com/{github_owner}/{github_repo}.git'
-                logger.info(f'GIT: Configurando remote origin para {github_owner}/{github_repo}')
-                subprocess.run(
-                    ['git', 'remote', 'add', 'origin', repo_url],
-                    cwd=str(REPO_PATH),
-                    check=True,
-                    capture_output=True,
-                    timeout=10
-                )
-                logger.info('GIT: Remote origin configurado')
+                logger.info(f'GIT: Adicionando remote origin para {github_owner}/{github_repo}')
+                try:
+                    subprocess.run(
+                        ['git', 'remote', 'add', 'origin', repo_url],
+                        cwd=str(REPO_PATH),
+                        check=True,
+                        capture_output=True,
+                        timeout=10
+                    )
+                    logger.info('GIT: Remote origin configurado com sucesso')
+                except subprocess.CalledProcessError as e:
+                    logger.error(f'GIT: Erro ao adicionar remote: {e.stderr.decode() if e.stderr else str(e)}')
+                    raise
             else:
-                logger.warning('GIT: Variáveis GITHUB_TOKEN/OWNER/REPO não configuradas, push pode falhar')
+                logger.error(f'GIT: Variáveis não configuradas - OWNER={github_owner}, REPO={github_repo}, TOKEN={"presente" if github_token else "ausente"}')
+                raise Exception('Variáveis GITHUB_TOKEN/OWNER/REPO não configuradas corretamente')
         
         # Git add
         for file in files:
@@ -186,11 +212,16 @@ def git_commit_push(files: List[str], message: str) -> bool:
             )
             logger.info('GIT: Commit concluído')
         except subprocess.CalledProcessError as e:
-            if 'nothing to commit' in e.stderr.decode():
+            stderr_output = e.stderr.decode() if e.stderr else ''
+            stdout_output = e.stdout.decode() if e.stdout else ''
+            
+            if 'nothing to commit' in stderr_output or 'nothing to commit' in stdout_output:
                 logger.info('GIT: Sem mudanças para commit (working tree clean)')
                 return True
             else:
-                logger.error(f'GIT: Commit falhou: {e.stderr.decode()}')
+                logger.error(f'GIT: Commit falhou:')
+                logger.error(f'  STDERR: {stderr_output}')
+                logger.error(f'  STDOUT: {stdout_output}')
                 return False
         
         # Git push
