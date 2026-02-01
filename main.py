@@ -134,6 +134,35 @@ def git_commit_push(files: List[str], message: str) -> bool:
         )
         logger.info('GIT: Identidade configurada')
         
+        # VERIFICAR E CONFIGURAR REMOTE ORIGIN
+        try:
+            result = subprocess.run(
+                ['git', 'remote', 'get-url', 'origin'],
+                cwd=str(REPO_PATH),
+                capture_output=True,
+                timeout=10
+            )
+            logger.info(f'GIT: Remote origin já configurado: {result.stdout.decode().strip()}')
+        except subprocess.CalledProcessError:
+            # Remote não existe, tentar configurar
+            github_token = os.getenv('GITHUB_TOKEN')
+            github_owner = os.getenv('GITHUB_OWNER')
+            github_repo = os.getenv('GITHUB_REPO')
+            
+            if github_token and github_owner and github_repo:
+                repo_url = f'https://{github_token}@github.com/{github_owner}/{github_repo}.git'
+                logger.info(f'GIT: Configurando remote origin para {github_owner}/{github_repo}')
+                subprocess.run(
+                    ['git', 'remote', 'add', 'origin', repo_url],
+                    cwd=str(REPO_PATH),
+                    check=True,
+                    capture_output=True,
+                    timeout=10
+                )
+                logger.info('GIT: Remote origin configurado')
+            else:
+                logger.warning('GIT: Variáveis GITHUB_TOKEN/OWNER/REPO não configuradas, push pode falhar')
+        
         # Git add
         for file in files:
             logger.info(f'GIT: git add {file}')
