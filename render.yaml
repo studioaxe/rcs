@@ -1,0 +1,80 @@
+services:
+  - type: web
+    name: rental-calendar-sync
+    runtime: python
+    plan: free
+    region: frankfurt
+
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+
+    startCommand: gunicorn main:app --bind 0.0.0.0:$PORT --workers 3
+
+    disks:
+      - name: calendar-storage
+        mountPath: /mnt/data
+        sizeGB: 1
+
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      - key: PORT
+        value: 8000
+      - key: RENDER
+        value: true
+      - key: REPO_PATH
+        value: /mnt/data
+
+      # As seguintes devem ser definidas no painel do Render com valores reais
+      - key: FLASK_SECRET_KEY
+        sync: false
+      - key: WEB_USERNAME
+        sync: false
+      - key: WEB_PASSWORD
+        sync: false
+
+      - key: AIRBNB_ICAL_URL
+        sync: false
+      - key: BOOKING_ICAL_URL
+        sync: false
+      - key: VRBO_ICAL_URL
+        sync: false
+
+      - key: BUFFER_DAYS_BEFORE
+        sync: false
+      - key: BUFFER_DAYS_AFTER
+        sync: false
+
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: GITHUB_OWNER
+        sync: false
+      - key: GITHUB_REPO
+        sync: false
+      - key: GITHUB_WORKFLOW
+        sync: false
+      - key: GITHUB_BRANCH
+        sync: false
+
+      - key: EMAIL_SERVER
+        sync: false
+      - key: EMAIL_PORT
+        sync: false
+      - key: EMAIL_USER
+        sync: false
+      - key: EMAIL_PASSWORD
+        sync: false
+      - key: NOTIFICATION_EMAIL
+        sync: false
+      - key: ERROR_EMAIL
+        sync: false
+      - key: EMAIL_ON_ERROR
+        sync: false
+      - key: EMAIL_ATTACH_LOG
+        sync: false
+
+      - key: ICS_SOURCE
+        sync: false
+      - key: ICS_CACHE_DIR
+        sync: false
