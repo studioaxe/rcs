@@ -130,220 +130,86 @@ def manual_editor_page():
 # FUNÇÕES AUXILIARES
 # ============================================================================
 
-def git_commit_push(files: List[str], message: str) -> bool:
-    """Faz git add, commit e push para ficheiros específicos.
+import base64
+import requests
+
+# ============================================================================
+# FUNÇÕES AUXILIARES - GITHUB API
+# ============================================================================
+
+def get_github_file_sha(filepath: str) -> Optional[str]:
+    """Obtém o SHA de um ficheiro no repositório via API do GitHub."""
+    github_token = os.getenv('GITHUB_TOKEN')
+    github_owner = os.getenv('GITHUB_OWNER')
+    github_repo = os.getenv('GITHUB_REPO')
     
-    ✅ CORREÇÃO CRÍTICA:
-    - Usa caminhos absolutos em git add
-    - Sincroniza com sync.py usando REPO_DIR
-    """
+    api_url = f"https://api.github.com/repos/{github_owner}/{github_repo}/contents/{filepath}"
+    headers = {
+        'Authorization': f'token {github_token}',
+        'Accept': 'application/vnd.github.v3+json'
+    }
+    
     try:
-        logger.info(f'GIT: Git add, commit, push para {len(files)} ficheiros')
-        
-        # CONFIGURAR GIT IDENTITY
-        logger.info('GIT: Configurando identidade Git...')
-        subprocess.run(
-            ['git', 'config', '--global', 'user.name', 'Rental Calendar Sync Bot'],
-            cwd=str(REPO_PATH),
-            check=True,
-            capture_output=True,
-            timeout=10
-        )
-        subprocess.run(
-            ['git', 'config', '--global', 'user.email', 'noreply@render.com'],
-            cwd=str(REPO_PATH),
-            check=True,
-            capture_output=True,
-            timeout=10
-        )
-        logger.info('GIT: Identidade configurada')
-        
-        # VERIFICAR E CONFIGURAR REMOTE ORIGIN
-        github_token = os.getenv('GITHUB_TOKEN')
-        github_owner = os.getenv('GITHUB_OWNER')
-        github_repo = os.getenv('GITHUB_REPO')
-        
-        logger.info(f'GIT: Verificando configuração - OWNER={github_owner}, REPO={github_repo}, TOKEN={"***" if github_token else "None"}')
-        
-        try:
-            result = subprocess.run(
-                ['git', 'remote', 'get-url', 'origin'],
-                cwd=str(REPO_PATH),
-                capture_output=True,
-                timeout=10,
-                check=False
-            )
-            
-            if result.returncode == 0:
-                current_url = result.stdout.decode().strip()
-                logger.info(f'GIT: Remote origin existente: {current_url}')
-                
-                if github_token and github_owner and github_repo and '@github.com' not in current_url:
-                    repo_url = f'https://{github_token}@github.com/{github_owner}/{github_repo}.git'
-                    logger.info('GIT: Atualizando remote origin com token de autenticação')
-                    subprocess.run(
-                        ['git', 'remote', 'set-url', 'origin', repo_url],
-                        cwd=str(REPO_PATH),
-                        check=True,
-                        capture_output=True,
-                        timeout=10
-                    )
-                    logger.info('GIT: Remote origin atualizado com autenticação')
-            else:
-                raise subprocess.CalledProcessError(result.returncode, result.args)
-                
-        except subprocess.CalledProcessError:
-            if github_token and github_owner and github_repo:
-                repo_url = f'https://{github_token}@github.com/{github_owner}/{github_repo}.git'
-                logger.info(f'GIT: Adicionando remote origin para {github_owner}/{github_repo}')
-                try:
-                    subprocess.run(
-                        ['git', 'remote', 'add', 'origin', repo_url],
-                        cwd=str(REPO_PATH),
-                        check=True,
-                        capture_output=True,
-                        timeout=10
-                    )
-                    logger.info('GIT: Remote origin configurado com sucesso')
-                except subprocess.CalledProcessError as e:
-                    logger.error(f'GIT: Erro ao adicionar remote: {e.stderr.decode() if e.stderr else str(e)}')
-                    raise
-            else:
-                logger.error(f'GIT: Variáveis não configuradas - OWNER={github_owner}, REPO={github_repo}, TOKEN={"presente" if github_token else "ausente"}')
-                raise Exception('Variáveis GITHUB_TOKEN/OWNER/REPO não configuradas corretamente')
-        
-        # ✅ CRÍTICO: Git add com caminhos ABSOLUTOS
-        # Isto garante que os ficheiros são encontrados mesmo se estão em caminho absoluto
-        for file in files:
-            # Converter para caminho absoluto se necessário
-            if os.path.isabs(file):
-                abs_path = file
-            else:
-                abs_path = str(REPO_PATH / file)
-            
-            logger.info(f'GIT: git add {abs_path}')
-            
-            # Verificar se o ficheiro existe
-            if not os.path.exists(abs_path):
-                logger.warning(f'GIT: Ficheiro não encontrado: {abs_path}')
-                continue
-            
-            # ✅ Usar caminho relativo para git (a partir de REPO_PATH)
-            rel_path = os.path.relpath(abs_path, str(REPO_PATH))
-            
-            subprocess.run(
-                ['git', 'add', rel_path],
-                cwd=str(REPO_PATH),
-                check=True,
-                capture_output=True,
-                timeout=30
-            )
-            logger.info(f'GIT: Ficheiro adicionado: {rel_path}')
-        
-        # VERIFICAR SE HÁ MUDANÇAS STAGED
-        status_result = subprocess.run(
-            ['git', 'status', '--porcelain'],
-            cwd=str(REPO_PATH),
-            capture_output=True,
-            timeout=10,
-            check=True
-        )
-        
-        staged_changes = status_result.stdout.decode().strip()
-        
-        if staged_changes:
-            logger.info(f'GIT: Mudanças detectadas:\n{staged_changes}')
-            
-            # Git commit
-            logger.info(f'GIT: git commit -m "{message}"')
-            try:
-                result = subprocess.run(
-                    ['git', 'commit', '-m', message],
-                    cwd=str(REPO_PATH),
-                    check=True,
-                    capture_output=True,
-                    timeout=30
-                )
-                logger.info('GIT: Commit concluído')
-            except subprocess.CalledProcessError as e:
-                stderr_output = e.stderr.decode() if e.stderr else ''
-                stdout_output = e.stdout.decode() if e.stdout else ''
-                logger.error(f'GIT: Commit falhou:')
-                logger.error(f'  STDERR: {stderr_output}')
-                logger.error(f'  STDOUT: {stdout_output}')
-                return False
+        response = requests.get(api_url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            sha = response.json()['sha']
+            logger.info(f"GIT API: SHA obtido para '{filepath}': {sha}")
+            return sha
+        elif response.status_code == 404:
+            logger.warning(f"GIT API: Ficheiro '{filepath}' não encontrado no repositório. Será criado.")
+            return None
         else:
-            logger.info('GIT: Sem mudanças staged para commit')
-        
-        # SEMPRE TENTAR PUSH
-        logger.info('GIT: Verificando estado do branch...')
-        try:
-            subprocess.run(
-                ['git', 'fetch', 'origin', 'main'],
-                cwd=str(REPO_PATH),
-                capture_output=True,
-                timeout=30,
-                check=True
-            )
-            logger.info('GIT: Fetch concluído')
-            
-            result = subprocess.run(
-                ['git', 'rev-list', '--count', 'HEAD..origin/main'],
-                cwd=str(REPO_PATH),
-                capture_output=True,
-                timeout=10,
-                check=True
-            )
-            
-            behind_count = int(result.stdout.decode().strip() or 0)
-            
-            if behind_count > 0:
-                logger.warning(f'GIT: Branch local está {behind_count} commit(s) atrás do remote')
-                logger.info('GIT: Fazendo pull antes do push...')
-                subprocess.run(
-                    ['git', 'pull', '--rebase', 'origin', 'main'],
-                    cwd=str(REPO_PATH),
-                    check=True,
-                    capture_output=True,
-                    timeout=60
-                )
-                logger.info('GIT: Pull com rebase concluído')
-        
-        except subprocess.CalledProcessError as e:
-            logger.warning(f'GIT: Erro no fetch/pull: {e.stderr.decode() if e.stderr else str(e)}')
-            logger.info('GIT: Continuando com push...')
-        
-        # Git push
-        logger.info('GIT: git push origin main')
-        try:
-            subprocess.run(
-                ['git', 'push', 'origin', 'main'],
-                cwd=str(REPO_PATH),
-                check=True,
-                capture_output=True,
-                timeout=60
-            )
-            logger.info('GIT: Push concluído com sucesso')
+            logger.error(f"GIT API: Erro ao obter SHA para '{filepath}'. Status: {response.status_code}, Resposta: {response.text}")
+            return None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"GIT API: Exceção ao obter SHA para '{filepath}': {e}")
+        return None
+
+def update_github_file(filepath: str, commit_message: str) -> bool:
+    """Lê um ficheiro local e atualiza-o no GitHub via API."""
+    github_token = os.getenv('GITHUB_TOKEN')
+    github_owner = os.getenv('GITHUB_OWNER')
+    github_repo = os.getenv('GITHUB_REPO')
+
+    # O ficheiro é lido a partir do APP_ROOT_PATH, que no Render é /opt/render/project/src
+    local_file_path = APP_ROOT_PATH / filepath
+    
+    if not local_file_path.exists():
+        logger.error(f"GIT API: Ficheiro local '{local_file_path}' não encontrado para upload.")
+        return False
+
+    with open(local_file_path, 'rb') as f:
+        content_bytes = f.read()
+    
+    content_base64 = base64.b64encode(content_bytes).decode('utf-8')
+    
+    sha = get_github_file_sha(filepath)
+    
+    api_url = f"https://api.github.com/repos/{github_owner}/{github_repo}/contents/{filepath}"
+    headers = {
+        'Authorization': f'token {github_token}',
+        'Accept': 'application/vnd.github.v3+json'
+    }
+    data = {
+        'message': commit_message,
+        'content': content_base64,
+        'branch': 'main'
+    }
+    if sha:
+        data['sha'] = sha
+
+    try:
+        response = requests.put(api_url, headers=headers, json=data, timeout=30)
+        if response.status_code in [200, 201]:
+            logger.info(f"GIT API: Ficheiro '{filepath}' atualizado/criado com sucesso.")
             return True
-        except subprocess.CalledProcessError as e:
-            stderr_output = e.stderr.decode() if e.stderr else ''
-            
-            if 'Everything up-to-date' in stderr_output:
-                logger.info('GIT: Push não necessário (everything up-to-date)')
-                return True
-            else:
-                logger.error(f'GIT: Push falhou: {stderr_output}')
-                return False
-        
-    except subprocess.TimeoutExpired:
-        logger.error('GIT: Timeout na operação git')
+        else:
+            logger.error(f"GIT API: Erro ao atualizar ficheiro '{filepath}'. Status: {response.status_code}, Resposta: {response.text}")
+            return False
+    except requests.exceptions.RequestException as e:
+        logger.error(f"GIT API: Exceção ao atualizar ficheiro '{filepath}': {e}")
         return False
-    except subprocess.CalledProcessError as e:
-        logger.error(f'GIT: Git error: {e.stderr.decode() if e.stderr else str(e)}')
-        return False
-    except Exception as e:
-        logger.error(f'GIT: Erro inesperado: {e}', exc_info=True)
-        return False
+
 
 # ============================================================================
 # API - SESSION
@@ -398,19 +264,13 @@ def api_sync():
         success = sync_calendars(force_download=force_download)
         
         if success:
-            logger.info('='*80)
-            logger.info('API: Sincronização concluída com sucesso')
-            logger.info('='*80)
-            
-            # Commit de todos os ficheiros de calendário
-            git_commit_push(
-                ['import_calendar.ics', 'manual_calendar.ics', 'master_calendar.ics'],
-                f'Sincronização automática de calendários (Fonte: {source})'
-            )
+            logger.info("API: Sincronização local concluída. Atualizando GitHub...")
+            update_github_file('import_calendar.ics', f'Auto-sync: import_calendar.ics (Fonte: {source})')
+            update_github_file('master_calendar.ics', f'Auto-sync: master_calendar.ics (Fonte: {source})')
             
             return jsonify(
                 status='success',
-                message='Sincronização completada com sucesso',
+                message='Sincronização completada e ficheiros atualizados no GitHub.',
                 timestamp=datetime.now().isoformat()
             ), 200
         else:
@@ -450,24 +310,17 @@ def api_sync_manual():
         success = sync_calendars(force_download=True)
         
         if success:
-            logger.info('='*80)
-            logger.info('API: Sincronização manual concluída com sucesso')
-            logger.info('='*80)
-            
-            # Após uma sincronização manual, tanto o import como o master podem ter mudado
-            git_commit_push(
-                ['import_calendar.ics', 'master_calendar.ics'],
-                f'Sincronização manual de calendários (utilizador: {user})'
-            )
+            logger.info("API: Sincronização manual concluída. Atualizando GitHub...")
+            update_github_file('import_calendar.ics', f'Manual sync: import_calendar.ics (User: {user})')
+            update_github_file('master_calendar.ics', f'Manual sync: master_calendar.ics (User: {user})')
             
             if should_notify:
                 logger.info("Enviando notificação de sucesso...")
-                # Considerar passar dados reais para o notificador
                 notifier.send_success(total_events=0, reserved_count=0)
             
             return jsonify(
                 status='success',
-                message='Sincronização completada com sucesso',
+                message='Sincronização completada e ficheiros atualizados no GitHub.',
                 timestamp=datetime.now().isoformat()
             ), 200
         else:
@@ -519,16 +372,9 @@ def api_calendar_import():
             logger.error(f'API: Erro durante sync.py: {sync_error}', exc_info=True)
             logger.warning('API: Continuando mesmo com erro...')
         
-        logger.info('API: Git commit + push import_calendar.ics, master_calendar.ics')
-        git_success = git_commit_push(
-            ['import_calendar.ics', 'master_calendar.ics'],
-            'import_calendar.ics + master_calendar.ics - Sincronização automática (AUTO)'
-        )
-        
-        if git_success:
-            logger.info('API: Git commit + push concluído')
-        else:
-            logger.warning('API: Git commit + push falhou (continuando)')
+        logger.info('API: Sincronização local concluída. Atualizando GitHub...')
+        update_github_file('import_calendar.ics', 'Calendar import: import_calendar.ics')
+        update_github_file('master_calendar.ics', 'Calendar import: master_calendar.ics')
         
         logger.info('API: Carregando import_calendar.ics ATUALIZADO...')
         editor = ManualEditorHandler()
@@ -605,38 +451,27 @@ def api_calendar_save():
             logger.error('API: Erro ao guardar manual_calendar.ics')
             return jsonify(success=False, message='Erro ao guardar manual_calendar.ics'), 500
         
-        logger.info('API: manual_calendar.ics guardado. A re-sincronizar master_calendar.ics...')
-        
-        # ✅ CRÍTICO: Re-sincronizar para atualizar o master_calendar.ics
+        logger.info("API: manual_calendar.ics guardado localmente. Atualizando no GitHub...")
+        user = AuthManager.get_current_user() or 'unknown'
+        git_success_manual = update_github_file('manual_calendar.ics', f'Editor manual: {user}')
+
+        logger.info("API: Re-sincronizar para atualizar master_calendar.ics...")
         sync_success = sync_calendars(force_download=False)
         if not sync_success:
             logger.error('API: Erro ao re-sincronizar calendários após guardar alterações manuais.')
-            # Mesmo com erro de sync, o manual_calendar.ics foi guardado.
-            # O git push vai na mesma para não perder as alterações manuais.
+            # Nota: Mesmo com este erro, o manual_calendar.ics já foi enviado para o GitHub.
         
-        files_to_commit = [
-            'manual_calendar.ics',
-            'master_calendar.ics'
-        ]
-        
-        # Opcional: Adicionar o import_calendar.ics se ele foi modificado
-        # Neste fluxo, o mais provável é que não tenha sido, mas por segurança...
-        if sync_success:
-            files_to_commit.append('import_calendar.ics')
-            
-        git_success = git_commit_push(
-            files_to_commit,
-            'Calendários atualizados (manual + master) - via editor (AUTO)'
-        )
-        
+        logger.info("API: Sincronização local concluída. Atualizando master no GitHub...")
+        git_success_master = update_github_file('master_calendar.ics', f'Update master por editor manual (User: {user})')
+
         logger.info('='*80)
         
         return jsonify(
             success=True,
-            message='Alterações guardadas e calendários sincronizados com sucesso',
+            message='Alterações guardadas e calendários sincronizados com sucesso no GitHub.',
             events_added=len(added),
             events_removed=len(removed),
-            git_synced=git_success,
+            git_synced=git_success_manual and git_success_master,
             sync_success=sync_success,
             timestamp=datetime.now().isoformat()
         ), 200
