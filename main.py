@@ -417,7 +417,7 @@ def api_calendar_import():
         logger.info('API: Iniciando sync_calendars()...')
         sync_start = datetime.now()
         try:
-            sync_success = sync_calendars()
+            sync_success = sync_calendars(force_download=True)
             sync_end = datetime.now()
             sync_duration = (sync_end - sync_start).total_seconds()
             if sync_success:
