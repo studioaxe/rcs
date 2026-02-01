@@ -3,6 +3,7 @@
 
 """
 main.py - Rental Calendar Sync - Flask API
+
 Versão: 1.0 Final
 Data: 01 de fevereiro de 2026
 Desenvolvido por: PBrandão
@@ -111,7 +112,11 @@ def manual_editor_page():
 # ============================================================================
 
 def git_commit_push(files: List[str], message: str) -> bool:
-    """Faz git add, commit e push para ficheiros específicos."""
+    """Faz git add, commit e push para ficheiros específicos.
+    
+    IMPORTANTE: Sempre tenta push, mesmo sem mudanças locais,
+    para garantir sincronização com GitHub.
+    """
     try:
         logger.info(f'GIT: Git add, commit, push para {len(files)} ficheiros')
         
@@ -200,41 +205,103 @@ def git_commit_push(files: List[str], message: str) -> bool:
                 timeout=30
             )
         
-        # Git commit
-        logger.info(f'GIT: git commit -m "{message}"')
-        try:
-            result = subprocess.run(
-                ['git', 'commit', '-m', message],
-                cwd=str(REPO_PATH),
-                check=True,
-                capture_output=True,
-                timeout=30
-            )
-            logger.info('GIT: Commit concluído')
-        except subprocess.CalledProcessError as e:
-            stderr_output = e.stderr.decode() if e.stderr else ''
-            stdout_output = e.stdout.decode() if e.stdout else ''
+        # VERIFICAR SE HÁ MUDANÇAS STAGED
+        status_result = subprocess.run(
+            ['git', 'status', '--porcelain'],
+            cwd=str(REPO_PATH),
+            capture_output=True,
+            timeout=10,
+            check=True
+        )
+        
+        staged_changes = status_result.stdout.decode().strip()
+        
+        if staged_changes:
+            logger.info(f'GIT: Mudanças detectadas:\n{staged_changes}')
             
-            if 'nothing to commit' in stderr_output or 'nothing to commit' in stdout_output:
-                logger.info('GIT: Sem mudanças para commit (working tree clean)')
-                return True
-            else:
+            # Git commit
+            logger.info(f'GIT: git commit -m "{message}"')
+            try:
+                result = subprocess.run(
+                    ['git', 'commit', '-m', message],
+                    cwd=str(REPO_PATH),
+                    check=True,
+                    capture_output=True,
+                    timeout=30
+                )
+                logger.info('GIT: Commit concluído')
+            except subprocess.CalledProcessError as e:
+                stderr_output = e.stderr.decode() if e.stderr else ''
+                stdout_output = e.stdout.decode() if e.stdout else ''
                 logger.error(f'GIT: Commit falhou:')
                 logger.error(f'  STDERR: {stderr_output}')
                 logger.error(f'  STDOUT: {stdout_output}')
                 return False
+        else:
+            logger.info('GIT: Sem mudanças staged para commit')
+        
+        # SEMPRE TENTAR PUSH (mesmo sem commit local)
+        # Isto garante que ficheiros já no GitHub sejam mantidos sincronizados
+        logger.info('GIT: Verificando estado do branch...')
+        try:
+            # Fetch para verificar se há mudanças remotas
+            subprocess.run(
+                ['git', 'fetch', 'origin', 'main'],
+                cwd=str(REPO_PATH),
+                capture_output=True,
+                timeout=30,
+                check=True
+            )
+            logger.info('GIT: Fetch concluído')
+            
+            # Verificar se estamos atrás do remote
+            result = subprocess.run(
+                ['git', 'rev-list', '--count', 'HEAD..origin/main'],
+                cwd=str(REPO_PATH),
+                capture_output=True,
+                timeout=10,
+                check=True
+            )
+            
+            behind_count = int(result.stdout.decode().strip() or 0)
+            
+            if behind_count > 0:
+                logger.warning(f'GIT: Branch local está {behind_count} commit(s) atrás do remote')
+                logger.info('GIT: Fazendo pull antes do push...')
+                subprocess.run(
+                    ['git', 'pull', '--rebase', 'origin', 'main'],
+                    cwd=str(REPO_PATH),
+                    check=True,
+                    capture_output=True,
+                    timeout=60
+                )
+                logger.info('GIT: Pull com rebase concluído')
+        
+        except subprocess.CalledProcessError as e:
+            logger.warning(f'GIT: Erro no fetch/pull: {e.stderr.decode() if e.stderr else str(e)}')
+            logger.info('GIT: Continuando com push...')
         
         # Git push
         logger.info('GIT: git push origin main')
-        subprocess.run(
-            ['git', 'push', 'origin', 'main'],
-            cwd=str(REPO_PATH),
-            check=True,
-            capture_output=True,
-            timeout=60
-        )
-        logger.info('GIT: Push concluído')
-        return True
+        try:
+            subprocess.run(
+                ['git', 'push', 'origin', 'main'],
+                cwd=str(REPO_PATH),
+                check=True,
+                capture_output=True,
+                timeout=60
+            )
+            logger.info('GIT: Push concluído com sucesso')
+            return True
+        except subprocess.CalledProcessError as e:
+            stderr_output = e.stderr.decode() if e.stderr else ''
+            
+            if 'Everything up-to-date' in stderr_output:
+                logger.info('GIT: Push não necessário (everything up-to-date)')
+                return True
+            else:
+                logger.error(f'GIT: Push falhou: {stderr_output}')
+                return False
         
     except subprocess.TimeoutExpired:
         logger.error('GIT: Timeout na operação git')
