@@ -37,7 +37,6 @@ load_dotenv()
 # NÃO usar __file__ porque pode estar em subpasta
 WORK_DIR = Path.cwd()
 SCRIPT_DIR = Path(__file__).parent.absolute()
-
 logger_instance = None
 
 # Tentar usar WORK_DIR se existir .git
@@ -79,6 +78,10 @@ logger.info(f"IMPORT_CALENDAR_PATH: {IMPORT_CALENDAR_PATH}")
 logger.info(f"MASTER_CALENDAR_PATH: {MASTER_CALENDAR_PATH}")
 logger.info(f"MANUAL_CALENDAR_PATH: {MANUAL_CALENDAR_PATH}")
 
+# ✅ CRÍTICO: Exportar REPO_DIR para main.py poder importar
+# Isto garante que main.py e sync.py usam o MESMO caminho
+__all__ = ['sync_calendars', 'convert_events_to_nights', 'apply_night_overlay_rules', 'REPO_DIR']
+
 # ============================================================
 # FUNÇÕES UTILITÁRIAS
 # ============================================================
@@ -87,16 +90,12 @@ def to_date(dtobj) -> Optional[date]:
     """✅ v1.6: Converte QUALQUER tipo de data para date."""
     if dtobj is None:
         return None
-    
     if hasattr(dtobj, 'dt'):
         dtobj = dtobj.dt
-    
     if isinstance(dtobj, date) and not isinstance(dtobj, datetime):
         return dtobj
-    
     if isinstance(dtobj, datetime):
         return dtobj.date()
-    
     if isinstance(dtobj, str):
         dtobj = str(dtobj).strip()
         if len(dtobj) == 8 and dtobj.isdigit():
@@ -109,25 +108,20 @@ def to_date(dtobj) -> Optional[date]:
                 return datetime.strptime(dtobj, '%Y-%m-%d').date()
             except (ValueError, TypeError):
                 pass
-    
     return None
 
 def to_datetime(dtobj) -> Optional[datetime]:
     """Converte para datetime com UTC."""
     if dtobj is None:
         return None
-    
     if hasattr(dtobj, 'dt'):
         dtobj = dtobj.dt
-    
     if isinstance(dtobj, datetime):
         if dtobj.tzinfo is None:
             return dtobj.replace(tzinfo=pytz.UTC)
         return dtobj
-    
     if isinstance(dtobj, date):
         return datetime.combine(dtobj, datetime.min.time()).replace(tzinfo=pytz.UTC)
-    
     return None
 
 def normalize_uid(uid: str) -> str:
@@ -168,7 +162,6 @@ def log_success(msg: str) -> None:
 def convert_events_to_nights(events: List[Dict]) -> Dict[str, Dict]:
     """✅ v1.6: Converte eventos para mapa de NOITES."""
     night_map: Dict[str, Dict] = {}
-    
     for event in events:
         dtstart = to_date(event.get('dtstart'))
         dtend = to_date(event.get('dtend'))
@@ -209,7 +202,6 @@ def apply_night_overlay_rules(import_nights: Dict[str, Dict],
         if manual_category == 'MANUAL-REMOVE':
             log_success(f"[OVERLAY] {night_date}: MANUAL-REMOVE sobrepõe PREP-TIME")
             final_nights[night_date] = manual_event
-        
         elif manual_category == 'MANUAL-BLOCK':
             if not import_event or import_category == 'AVAILABLE':
                 log_success(f"[OVERLAY] {night_date}: MANUAL-BLOCK bloqueia")
@@ -238,7 +230,6 @@ def download_calendar(url: str, source: str) -> Optional[Calendar]:
         events = [c for c in cal.walk() if c.name == 'VEVENT']
         log_success(f"Downloaded {len(events)} events from {source}")
         return cal
-    
     except Exception as e:
         log_error(f"Erro ao descarregar {source}: {e}")
         return None
@@ -259,7 +250,6 @@ def fetch_all_calendars() -> Optional[Dict[str, Optional[Calendar]]]:
                 'BOOKING': None,
                 'VRBO': None,
             }
-    
     except Exception as e:
         log_warning(f"Error loading existing import_calendar.ics: {e}")
     
@@ -321,7 +311,6 @@ def extract_events(calendars: Dict[str, Optional[Calendar]]) -> List[Dict]:
                     'already_processed': False,
                 }
                 all_events.append(event)
-        
         except Exception as e:
             log_error(f"Erro ao extrair de {source}: {e}")
     
@@ -363,7 +352,6 @@ def load_manual_calendar() -> Optional[Calendar]:
             cal = Calendar.from_ical(f.read())
         log_info(f"Loaded {MANUAL_CALENDAR_PATH}")
         return cal
-    
     except Exception as e:
         log_error(f"Erro ao carregar manual calendar: {e}")
         return None
@@ -397,7 +385,6 @@ def get_manual_removes(manual_calendar: Optional[Calendar]) -> Set[Tuple[date, d
             
             dtstart = component.get('DTSTART')
             dtend = component.get('DTEND')
-            
             start_date = to_date(dtstart)
             end_date = to_date(dtend)
             
@@ -406,7 +393,6 @@ def get_manual_removes(manual_calendar: Optional[Calendar]) -> Set[Tuple[date, d
                 remove_ranges.add(date_range)
                 summary = str(component.get('SUMMARY', 'evento'))
                 log_success(f"[MANUAL-REMOVE] {summary} ({start_date} a {end_date})")
-    
     except Exception as e:
         log_error(f"Erro ao ler manual removes: {e}")
     
@@ -441,7 +427,6 @@ def get_manual_blocks(manual_calendar: Optional[Calendar]) -> List[Dict]:
             
             dtstart = component.get('DTSTART')
             dtend = component.get('DTEND')
-            
             block = {
                 'uid': str(component.get('UID', '')),
                 'summary': str(component.get('SUMMARY', 'Bloqueado')),
@@ -450,13 +435,11 @@ def get_manual_blocks(manual_calendar: Optional[Calendar]) -> List[Dict]:
                 'description': str(component.get('DESCRIPTION', '')),
                 'component': component,
             }
-            
             blocks.append(block)
             log_info(f"[MANUAL-BLOCK FOUND] {block['summary']}")
         
         if blocks:
             log_success(f"Loaded {len(blocks)} manual blocks")
-    
     except Exception as e:
         log_error(f"Erro ao ler manual blocks: {e}")
     
@@ -515,7 +498,6 @@ def create_import_calendar(events: List[Dict]) -> Calendar:
             tp_before_uid = f"{uid_base}-tp-before"
             tp_before_start = start_date - timedelta(days=BUFFER_DAYS_BEFORE)
             tp_before_end = start_date
-            
             tp_before_event = Event()
             tp_before_event.add('uid', tp_before_uid)
             tp_before_event.add('summary', f"TP Antes {source} {tp_before_start} a {start_date}")
@@ -538,7 +520,6 @@ def create_import_calendar(events: List[Dict]) -> Calendar:
             tp_after_uid = f"{uid_base}-tp-after"
             tp_after_start = end_date
             tp_after_end = end_date + timedelta(days=BUFFER_DAYS_AFTER)
-            
             tp_after_event = Event()
             tp_after_event.add('uid', tp_after_uid)
             tp_after_event.add('summary', f"TP Depois {source} {end_date} a {tp_after_end}")
@@ -556,17 +537,13 @@ def create_import_calendar(events: List[Dict]) -> Calendar:
             tp_after_event.add('class', 'PUBLIC')
             cal.add_component(tp_after_event)
             event_count += 1
-        
         except Exception as e:
             log_error(f"Erro ao processar evento: {e}")
     
     log_success(f"Created import_calendar with {event_count} events ({len(events)} reservations)")
     return cal
 
-def merge_calendars(
-    import_cal: Calendar,
-    manual_cal: Optional[Calendar],
-) -> Calendar:
+def merge_calendars(import_cal: Calendar, manual_cal: Optional[Calendar]) -> Calendar:
     """✅ v1.6: Merge com to_date() CORRIGIDA."""
     log_info("STEP 5: Merging calendars (import + manual)...")
     
@@ -579,7 +556,6 @@ def merge_calendars(
     
     manual_blocks = get_manual_blocks(manual_cal)
     manual_removes = get_manual_removes(manual_cal)
-    
     log_info(f"[MERGE] Processando: {len(manual_blocks)} MANUAL-BLOCK, {len(manual_removes)} MANUAL-REMOVE")
     
     included = 0
@@ -592,8 +568,8 @@ def merge_calendars(
             continue
         
         uid = normalize_uid(str(component.get('UID', '')))
-        
         categories_raw = component.get('CATEGORIES')
+        
         if hasattr(categories_raw, 'to_ical'):
             try:
                 categories = categories_raw.to_ical().decode().upper()
@@ -614,10 +590,8 @@ def merge_calendars(
         if 'PREP-TIME' in categories:
             dtstart = component.get('DTSTART')
             dtend = component.get('DTEND')
-            
             start_date = to_date(dtstart)
             end_date = to_date(dtend)
-            
             event_range = (start_date, end_date) if (start_date and end_date) else None
             
             if event_range and event_range in manual_removes:
@@ -664,7 +638,6 @@ def export_to_file(cal: Calendar, filepath: str) -> bool:
         filesize = os.path.getsize(filepath)
         log_success(f"Exported {filepath} ({filesize} bytes)")
         return True
-    
     except Exception as e:
         log_error(f"Erro ao exportar {filepath}: {e}")
         return False
@@ -673,21 +646,16 @@ def sync_local() -> Dict[str, Any]:
     """Main sync."""
     try:
         calendars = fetch_all_calendars()
-        
         if calendars is None:
             return {'status': 'error', 'message': 'Nenhum calendário importado'}
         
         events = extract_events(calendars)
-        
         if not events:
             return {'status': 'error', 'message': 'Nenhum evento encontrado'}
         
         events = deduplicate_events(events)
-        
         import_cal = create_import_calendar(events)
-        
         manual_cal = load_manual_calendar()
-        
         master_cal = merge_calendars(import_cal, manual_cal)
         
         if not export_to_file(import_cal, IMPORT_CALENDAR_PATH):
@@ -709,7 +677,6 @@ def sync_local() -> Dict[str, Any]:
             'master_count': master_events,
             'timestamp': datetime.now().isoformat(),
         }
-    
     except Exception as e:
         log_error(f"Sync failed: {e}")
         import traceback
@@ -723,7 +690,7 @@ def sync_calendars() -> bool:
 
 if __name__ == '__main__':
     log_info('=' * 70)
-    log_info('CALENDAR SYNCHRONIZATION - v1.6 DEFINITIVA (CORRIGIDA - Caminhos Git)')
+    log_info('CALENDAR SYNCHRONIZATION - v1.7 FINAL (REPO_DIR Exportado)')
     log_info(f'Timestamp: {datetime.now().isoformat()}')
     log_info(f'Config: TP antes={BUFFER_DAYS_BEFORE}d, TP depois={BUFFER_DAYS_AFTER}d')
     log_info(f'Repo directory: {REPO_DIR}')
