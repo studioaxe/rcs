@@ -30,22 +30,37 @@ except ImportError as e:
 load_dotenv()
 
 # ============================================================
-# CONFIGURAÇÃO
+# CONFIGURAÇÃO - ✅ CORRIGIDA
 # ============================================================
 
-SCRIPT_DIR = os.path.abspath(os.path.dirname(__file__))
+# ✅ CRÍTICO: Usar Path.cwd() para obter pasta de trabalho (Git repo)
+# NÃO usar __file__ porque pode estar em subpasta
+WORK_DIR = Path.cwd()
+SCRIPT_DIR = Path(__file__).parent.absolute()
 
+logger_instance = None
+
+# Tentar usar WORK_DIR se existir .git
+if (WORK_DIR / '.git').exists():
+    REPO_DIR = WORK_DIR
+    logger_msg = f"✅ Git repo detectado em: {REPO_DIR}"
+else:
+    # Fallback para SCRIPT_DIR
+    REPO_DIR = SCRIPT_DIR
+    logger_msg = f"⚠️ Usando SCRIPT_DIR: {REPO_DIR}"
+
+# Caminhos dos ficheiros - ✅ SEMPRE na raiz do repo Git
+IMPORT_CALENDAR_PATH = str(REPO_DIR / 'import_calendar.ics')
+MASTER_CALENDAR_PATH = str(REPO_DIR / 'master_calendar.ics')
+MANUAL_CALENDAR_PATH = str(REPO_DIR / 'manual_calendar.ics')
+LOG_FILE = str(REPO_DIR / 'sync.log')
+
+# URLs
 AIRBNB_ICAL_URL = os.getenv('AIRBNB_ICAL_URL', '')
 BOOKING_ICAL_URL = os.getenv('BOOKING_ICAL_URL', '')
 VRBO_ICAL_URL = os.getenv('VRBO_ICAL_URL', '')
-
 BUFFER_DAYS_BEFORE = int(os.getenv('BUFFER_DAYS_BEFORE', 1))
 BUFFER_DAYS_AFTER = int(os.getenv('BUFFER_DAYS_AFTER', 1))
-
-IMPORT_CALENDAR_PATH = os.path.join(SCRIPT_DIR, 'import_calendar.ics')
-MASTER_CALENDAR_PATH = os.path.join(SCRIPT_DIR, 'master_calendar.ics')
-MANUAL_CALENDAR_PATH = os.path.join(SCRIPT_DIR, 'manual_calendar.ics')
-LOG_FILE = os.path.join(SCRIPT_DIR, 'sync.log')
 
 logging.basicConfig(
     level=logging.INFO,
@@ -58,23 +73,24 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+# Log inicial
+logger.info(f"REPO_DIR: {REPO_DIR}")
+logger.info(f"IMPORT_CALENDAR_PATH: {IMPORT_CALENDAR_PATH}")
+logger.info(f"MASTER_CALENDAR_PATH: {MASTER_CALENDAR_PATH}")
+logger.info(f"MANUAL_CALENDAR_PATH: {MANUAL_CALENDAR_PATH}")
+
 # ============================================================
-# FUNÇÕES UTILITÁRIAS - ✅ CRÍTICA CORRIGIDA
+# FUNÇÕES UTILITÁRIAS
 # ============================================================
 
 def to_date(dtobj) -> Optional[date]:
-    """
-    ✅ v1.6: Converte QUALQUER tipo de data para date.
-    CRÍTICO: Trata vDDDTypes da icalendar!
-    """
+    """✅ v1.6: Converte QUALQUER tipo de data para date."""
     if dtobj is None:
         return None
     
-    # Se tem .dt, extrai primeiro (para vDDDTypes)
     if hasattr(dtobj, 'dt'):
         dtobj = dtobj.dt
     
-    # Agora processa o valor
     if isinstance(dtobj, date) and not isinstance(dtobj, datetime):
         return dtobj
     
@@ -101,7 +117,6 @@ def to_datetime(dtobj) -> Optional[datetime]:
     if dtobj is None:
         return None
     
-    # Se tem .dt, extrai primeiro
     if hasattr(dtobj, 'dt'):
         dtobj = dtobj.dt
     
@@ -147,24 +162,11 @@ def log_success(msg: str) -> None:
     print(f"[SUCCESS] {msg}")
 
 # ============================================================
-# NOITES (NIGHTS) - REPRESENTAÇÃO PARA ALOJAMENTO LOCAL
+# NOITES (NIGHTS)
 # ============================================================
 
 def convert_events_to_nights(events: List[Dict]) -> Dict[str, Dict]:
-    """
-    ✅ v1.6: Converte eventos (DTSTART/DTEND) para mapa de NOITES.
-    
-    CONCEITO: Para alojamento local, um intervalo [DTSTART, DTEND) representa noites,
-    não dias. Exemplo:
-    - DTSTART:20260213, DTEND:20260217 = 4 noites (13→14, 14→15, 15→16, 16→17)
-    - Renderização: cores em [13, 14, 15, 16] (NÃO 17)
-    
-    Args:
-        events: List[Dict] com 'dtstart', 'dtend', 'categories', 'description'
-    
-    Returns:
-        Dict[date_str] = {'category': ..., 'color': ..., 'description': ...}
-    """
+    """✅ v1.6: Converte eventos para mapa de NOITES."""
     night_map: Dict[str, Dict] = {}
     
     for event in events:
@@ -177,66 +179,42 @@ def convert_events_to_nights(events: List[Dict]) -> Dict[str, Dict]:
         if not dtstart or not dtend:
             continue
         
-        # Iterar de dtstart até ao dia ANTES de dtend (isso é uma noite!)
         current = dtstart
         while current < dtend:
-            night_date_str = current.isoformat()  # '2026-02-13'
-            
+            night_date_str = current.isoformat()
             night_map[night_date_str] = {
                 'category': categories,
                 'description': description,
                 'uid': uid,
             }
-            
             current += timedelta(days=1)
     
     log_info(f"[NIGHTS] Convertidos {len(events)} eventos → {len(night_map)} noites")
     return night_map
 
-def apply_night_overlay_rules(import_nights: Dict[str, Dict], 
+def apply_night_overlay_rules(import_nights: Dict[str, Dict],
                                manual_nights: Dict[str, Dict]) -> Dict[str, Dict]:
-    """
-    ✅ Aplica regras de sobrecarga: manual sobrepõe import (com exceções).
-    
-    REGRAS DE PRIORIDADE:
-      1. RESERVATION (import) → SOBERANA, NUNCA muda
-      2. MANUAL-REMOVE (manual) → Sobrepõe PREP-TIME
-      3. PREP-TIME (import) → Pode ser sobreposta
-      4. MANUAL-BLOCK (manual) → Bloqueia disponíveis
-      5. AVAILABLE (base) → Sem eventos
-    
-    Args:
-        import_nights: Dict de noites do import_calendar
-        manual_nights: Dict de noites do manual_calendar
-    
-    Returns:
-        Dict de noites finais com regras aplicadas
-    """
-    final_nights = dict(import_nights)  # Cópia de import
+    """✅ Aplica regras de sobrecarga."""
+    final_nights = dict(import_nights)
     
     for night_date, manual_event in manual_nights.items():
         import_event = import_nights.get(night_date)
         import_category = import_event['category'] if import_event else None
         manual_category = manual_event['category']
         
-        # REGRA 1: RESERVATION é SOBERANA
         if import_category == 'RESERVATION':
-            log_info(f"[OVERLAY] {night_date}: RESERVATION é soberana, ignora manual {manual_category}")
+            log_info(f"[OVERLAY] {night_date}: RESERVATION é soberana")
             continue
         
-        # REGRA 2: MANUAL-REMOVE sobrepõe PREP-TIME
         if manual_category == 'MANUAL-REMOVE':
             log_success(f"[OVERLAY] {night_date}: MANUAL-REMOVE sobrepõe PREP-TIME")
             final_nights[night_date] = manual_event
         
-        # REGRA 3: MANUAL-BLOCK bloqueia AVAILABLE
         elif manual_category == 'MANUAL-BLOCK':
             if not import_event or import_category == 'AVAILABLE':
                 log_success(f"[OVERLAY] {night_date}: MANUAL-BLOCK bloqueia")
                 final_nights[night_date] = manual_event
-        
         else:
-            # Outros eventos manual: aplicar normalmente
             final_nights[night_date] = manual_event
     
     return final_nights
@@ -251,13 +229,16 @@ def download_calendar(url: str, source: str) -> Optional[Calendar]:
         if not url:
             log_warning(f"Nenhuma URL para {source}")
             return None
+        
         log_info(f"[IMPORT] Downloading {source}...")
         response = requests.get(url, timeout=30)
         response.raise_for_status()
+        
         cal = Calendar.from_ical(response.content)
         events = [c for c in cal.walk() if c.name == 'VEVENT']
         log_success(f"Downloaded {len(events)} events from {source}")
         return cal
+    
     except Exception as e:
         log_error(f"Erro ao descarregar {source}: {e}")
         return None
@@ -266,7 +247,6 @@ def fetch_all_calendars() -> Optional[Dict[str, Optional[Calendar]]]:
     """Download all calendars or load from import_calendar.ics if it exists."""
     log_info("STEP 1: Importing calendars...")
     
-    # ✅ CORREÇÃO: Primeiro tenta carregar import_calendar.ics existente
     try:
         path = Path(IMPORT_CALENDAR_PATH)
         if path.exists():
@@ -279,38 +259,38 @@ def fetch_all_calendars() -> Optional[Dict[str, Optional[Calendar]]]:
                 'BOOKING': None,
                 'VRBO': None,
             }
+    
     except Exception as e:
         log_warning(f"Error loading existing import_calendar.ics: {e}")
     
-    # Se não existe, tenta fazer download
     calendars = {
         'AIRBNB': download_calendar(AIRBNB_ICAL_URL, 'AIRBNB'),
         'BOOKING': download_calendar(BOOKING_ICAL_URL, 'BOOKING'),
         'VRBO': download_calendar(VRBO_ICAL_URL, 'VRBO'),
     }
+    
     if all(v is None for v in calendars.values()):
-        # Nenhuma URL e nenhum ficheiro existe = ERRO
         log_error("ERROR: No calendar imported and import_calendar.ics does not exist")
         return None
+    
     return calendars
 
 def extract_events(calendars: Dict[str, Optional[Calendar]]) -> List[Dict]:
     """Extract events."""
     log_info("STEP 2: Extracting events...")
     all_events: List[Dict] = []
+    
     for source, cal in calendars.items():
         if cal is None:
             continue
+        
         try:
             for component in cal.walk():
                 if component.name != 'VEVENT':
                     continue
                 
-                # Skip if already has CATEGORIES (já está processado)
                 categories_raw = component.get('CATEGORIES')
                 if categories_raw:
-                    # Se já tem categorias, é do import_calendar.ics já processado
-                    # Adicionar diretamente sem processar novamente
                     dtstart = component.get('DTSTART')
                     dtend = component.get('DTEND')
                     event = {
@@ -322,7 +302,7 @@ def extract_events(calendars: Dict[str, Optional[Calendar]]) -> List[Dict]:
                         'description': str(component.get('DESCRIPTION', '')),
                         'location': str(component.get('LOCATION', '')),
                         'component': component,
-                        'already_processed': True,  # Marca como já processado
+                        'already_processed': True,
                     }
                     all_events.append(event)
                     continue
@@ -341,27 +321,34 @@ def extract_events(calendars: Dict[str, Optional[Calendar]]) -> List[Dict]:
                     'already_processed': False,
                 }
                 all_events.append(event)
+        
         except Exception as e:
             log_error(f"Erro ao extrair de {source}: {e}")
+    
     log_info(f"Extracted {len(all_events)} events total")
     return all_events
 
 def deduplicate_events(events: List[Dict]) -> List[Dict]:
     """Deduplicate events."""
     log_info("STEP 3: Deduplicating events...")
+    
     if not events:
         return []
+    
     groups: Dict = {}
     for event in events:
         key = (to_date(event['dtstart']), to_date(event['dtend']), event['summary'])
         groups.setdefault(key, []).append(event)
+    
     deduplicated: List[Dict] = []
     for _, group in groups.items():
         best = max(group, key=lambda e: len(e.get('description', '')))
         deduplicated.append(best)
+    
     removed = len(events) - len(deduplicated)
     if removed > 0:
         log_warning(f"Removidos {removed} duplicatas")
+    
     return deduplicated
 
 def load_manual_calendar() -> Optional[Calendar]:
@@ -371,19 +358,18 @@ def load_manual_calendar() -> Optional[Calendar]:
         if not path.exists():
             log_info(f"Nenhum manual_calendar.ics encontrado")
             return None
+        
         with path.open('rb') as f:
             cal = Calendar.from_ical(f.read())
-            log_info(f"Loaded {MANUAL_CALENDAR_PATH}")
-            return cal
+        log_info(f"Loaded {MANUAL_CALENDAR_PATH}")
+        return cal
+    
     except Exception as e:
         log_error(f"Erro ao carregar manual calendar: {e}")
         return None
 
 def get_manual_removes(manual_calendar: Optional[Calendar]) -> Set[Tuple[date, date]]:
-    """
-    ✅ v1.6: Extrai MANUAL-REMOVE com to_date() CORRIGIDA.
-    Agora trata vDDDTypes corretamente!
-    """
+    """✅ v1.6: Extrai MANUAL-REMOVE."""
     remove_ranges: Set[Tuple[date, date]] = set()
     
     if manual_calendar is None:
@@ -394,7 +380,6 @@ def get_manual_removes(manual_calendar: Optional[Calendar]) -> Set[Tuple[date, d
             if component.name != 'VEVENT':
                 continue
             
-            # Parse CATEGORIES
             categories_raw = component.get('CATEGORIES')
             if not categories_raw:
                 continue
@@ -407,11 +392,9 @@ def get_manual_removes(manual_calendar: Optional[Calendar]) -> Set[Tuple[date, d
             else:
                 categories_str = str(categories_raw).upper()
             
-            # Procura MANUAL-REMOVE
             if 'MANUAL-REMOVE' not in categories_str:
                 continue
             
-            # ✅ v1.6: Extrai datas com to_date() CORRIGIDA
             dtstart = component.get('DTSTART')
             dtend = component.get('DTEND')
             
@@ -421,29 +404,30 @@ def get_manual_removes(manual_calendar: Optional[Calendar]) -> Set[Tuple[date, d
             if start_date and end_date:
                 date_range = (start_date, end_date)
                 remove_ranges.add(date_range)
-                
                 summary = str(component.get('SUMMARY', 'evento'))
                 log_success(f"[MANUAL-REMOVE] {summary} ({start_date} a {end_date})")
     
     except Exception as e:
         log_error(f"Erro ao ler manual removes: {e}")
-        import traceback
-        log_error(traceback.format_exc())
     
     return remove_ranges
 
 def get_manual_blocks(manual_calendar: Optional[Calendar]) -> List[Dict]:
     """Get manual blocks."""
     blocks: List[Dict] = []
+    
     if not manual_calendar:
         return blocks
+    
     try:
         for component in manual_calendar.walk():
             if component.name != 'VEVENT':
                 continue
+            
             categories_raw = component.get('CATEGORIES')
             if not categories_raw:
                 continue
+            
             if hasattr(categories_raw, 'to_ical'):
                 try:
                     categories_str = categories_raw.to_ical().decode().upper()
@@ -451,10 +435,13 @@ def get_manual_blocks(manual_calendar: Optional[Calendar]) -> List[Dict]:
                     categories_str = str(categories_raw).upper()
             else:
                 categories_str = str(categories_raw).upper()
+            
             if 'MANUAL-BLOCK' not in categories_str:
                 continue
+            
             dtstart = component.get('DTSTART')
             dtend = component.get('DTEND')
+            
             block = {
                 'uid': str(component.get('UID', '')),
                 'summary': str(component.get('SUMMARY', 'Bloqueado')),
@@ -463,27 +450,33 @@ def get_manual_blocks(manual_calendar: Optional[Calendar]) -> List[Dict]:
                 'description': str(component.get('DESCRIPTION', '')),
                 'component': component,
             }
+            
             blocks.append(block)
             log_info(f"[MANUAL-BLOCK FOUND] {block['summary']}")
+        
         if blocks:
             log_success(f"Loaded {len(blocks)} manual blocks")
+    
     except Exception as e:
         log_error(f"Erro ao ler manual blocks: {e}")
+    
     return blocks
 
 def create_import_calendar(events: List[Dict]) -> Calendar:
     """Create import calendar."""
     log_info("STEP 4: Creating import_calendar.ics...")
+    
     cal = Calendar()
     cal.add('prodid', '-//Rental Import Calendar//PT')
     cal.add('version', '2.0')
     cal.add('calscale', 'GREGORIAN')
     cal.add('x-wr-calname', 'Import Calendar Auto')
     cal.add('x-wr-timezone', 'Europe/Lisbon')
+    
     event_count = 0
+    
     for event in events:
         try:
-            # ✅ Se já foi processado (vem do import_calendar.ics), adiciona diretamente
             if event.get('already_processed'):
                 cal.add_component(event['component'])
                 event_count += 1
@@ -491,8 +484,10 @@ def create_import_calendar(events: List[Dict]) -> Calendar:
             
             dtstart = to_datetime(event['dtstart'])
             dtend = to_datetime(event['dtend'])
+            
             if not dtstart or not dtend:
                 continue
+            
             source = event.get('source', 'UNKNOWN')
             uid_base = event.get('uid', '')
             start_date = to_date(dtstart)
@@ -520,6 +515,7 @@ def create_import_calendar(events: List[Dict]) -> Calendar:
             tp_before_uid = f"{uid_base}-tp-before"
             tp_before_start = start_date - timedelta(days=BUFFER_DAYS_BEFORE)
             tp_before_end = start_date
+            
             tp_before_event = Event()
             tp_before_event.add('uid', tp_before_uid)
             tp_before_event.add('summary', f"TP Antes {source} {tp_before_start} a {start_date}")
@@ -542,6 +538,7 @@ def create_import_calendar(events: List[Dict]) -> Calendar:
             tp_after_uid = f"{uid_base}-tp-after"
             tp_after_start = end_date
             tp_after_end = end_date + timedelta(days=BUFFER_DAYS_AFTER)
+            
             tp_after_event = Event()
             tp_after_event.add('uid', tp_after_uid)
             tp_after_event.add('summary', f"TP Depois {source} {end_date} a {tp_after_end}")
@@ -559,8 +556,10 @@ def create_import_calendar(events: List[Dict]) -> Calendar:
             tp_after_event.add('class', 'PUBLIC')
             cal.add_component(tp_after_event)
             event_count += 1
+        
         except Exception as e:
             log_error(f"Erro ao processar evento: {e}")
+    
     log_success(f"Created import_calendar with {event_count} events ({len(events)} reservations)")
     return cal
 
@@ -570,6 +569,7 @@ def merge_calendars(
 ) -> Calendar:
     """✅ v1.6: Merge com to_date() CORRIGIDA."""
     log_info("STEP 5: Merging calendars (import + manual)...")
+    
     master_cal = Calendar()
     master_cal.add('prodid', '-//Rental Master Calendar//PT')
     master_cal.add('version', '2.0')
@@ -577,7 +577,6 @@ def merge_calendars(
     master_cal.add('x-wr-calname', 'Master Calendar Final')
     master_cal.add('x-wr-timezone', 'Europe/Lisbon')
     
-    # ✅ v1.6: AGORA FUNCIONA com to_date() CORRIGIDA
     manual_blocks = get_manual_blocks(manual_cal)
     manual_removes = get_manual_removes(manual_cal)
     
@@ -594,7 +593,6 @@ def merge_calendars(
         
         uid = normalize_uid(str(component.get('UID', '')))
         
-        # Parse CATEGORIES
         categories_raw = component.get('CATEGORIES')
         if hasattr(categories_raw, 'to_ical'):
             try:
@@ -606,7 +604,6 @@ def merge_calendars(
         
         summary = str(component.get('SUMMARY', '?'))
         
-        # REGRA 1: RESERVATION são soberanas
         if 'RESERVATION' in categories:
             log_info(f"[MERGE] Evento adicional: {summary}")
             master_cal.add_component(component)
@@ -614,12 +611,10 @@ def merge_calendars(
             reservations_included += 1
             continue
         
-        # REGRA 2: PREP-TIME podem ser removidas
         if 'PREP-TIME' in categories:
             dtstart = component.get('DTSTART')
             dtend = component.get('DTEND')
             
-            # ✅ v1.6: AGORA FUNCIONA!
             start_date = to_date(dtstart)
             end_date = to_date(dtend)
             
@@ -636,12 +631,10 @@ def merge_calendars(
             included += 1
             continue
         
-        # Outros eventos
         log_info(f"[MERGE] Evento adicional: {summary}")
         master_cal.add_component(component)
         included += 1
     
-    # Adicionar MANUAL-BLOCK
     for block in manual_blocks:
         block_summary = block.get('summary', '?')
         log_info(f"[MERGE] Adicionando MANUAL-BLOCK: {block_summary}")
@@ -659,13 +652,19 @@ def merge_calendars(
 def export_to_file(cal: Calendar, filepath: str) -> bool:
     """Export calendar."""
     try:
+        # ✅ CRÍTICO: Garantir que a pasta existe
+        Path(filepath).parent.mkdir(parents=True, exist_ok=True)
+        
         ical_data = cal.to_ical()
         ical_data = ical_data.replace(b'\r\n ', b'').replace(b'\n ', b'')
+        
         with open(filepath, 'wb') as f:
             f.write(ical_data)
+        
         filesize = os.path.getsize(filepath)
         log_success(f"Exported {filepath} ({filesize} bytes)")
         return True
+    
     except Exception as e:
         log_error(f"Erro ao exportar {filepath}: {e}")
         return False
@@ -674,15 +673,19 @@ def sync_local() -> Dict[str, Any]:
     """Main sync."""
     try:
         calendars = fetch_all_calendars()
+        
         if calendars is None:
             return {'status': 'error', 'message': 'Nenhum calendário importado'}
         
         events = extract_events(calendars)
+        
         if not events:
             return {'status': 'error', 'message': 'Nenhum evento encontrado'}
         
         events = deduplicate_events(events)
+        
         import_cal = create_import_calendar(events)
+        
         manual_cal = load_manual_calendar()
         
         master_cal = merge_calendars(import_cal, manual_cal)
@@ -720,10 +723,10 @@ def sync_calendars() -> bool:
 
 if __name__ == '__main__':
     log_info('=' * 70)
-    log_info('CALENDAR SYNCHRONIZATION - v1.6 DEFINITIVA (CORRIGIDA)')
+    log_info('CALENDAR SYNCHRONIZATION - v1.6 DEFINITIVA (CORRIGIDA - Caminhos Git)')
     log_info(f'Timestamp: {datetime.now().isoformat()}')
     log_info(f'Config: TP antes={BUFFER_DAYS_BEFORE}d, TP depois={BUFFER_DAYS_AFTER}d')
-    log_info(f'Script directory: {SCRIPT_DIR}')
+    log_info(f'Repo directory: {REPO_DIR}')
     log_info('=' * 70)
     
     result = sync_local()

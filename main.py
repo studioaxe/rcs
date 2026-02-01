@@ -20,12 +20,13 @@ from flask import Flask, render_template, request, redirect, url_for, jsonify, s
 
 sys.path.insert(0, str(Path(__file__).parent))
 from auth import AuthManager, login_required, api_login_required
-from sync import sync_calendars, convert_events_to_nights, apply_night_overlay_rules
+from sync import sync_calendars, convert_events_to_nights, apply_night_overlay_rules, REPO_DIR
 from backend.notifier import EmailNotifier
 from backend.ics import ICSHandler
 from backend.manual_editor import ManualEditorHandler
 
-REPO_PATH = Path(__file__).parent
+# ✅ CRÍTICO: Usar o mesmo REPO_DIR que sync.py
+REPO_PATH = Path(REPO_DIR)
 STATIC_PATH = REPO_PATH / "static"
 TEMPLATES_PATH = REPO_PATH / "templates"
 
@@ -42,6 +43,10 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+logger.info(f"REPO_PATH: {REPO_PATH}")
+logger.info(f"STATIC_PATH: {STATIC_PATH}")
+logger.info(f"TEMPLATES_PATH: {TEMPLATES_PATH}")
 
 app = Flask(__name__, static_folder=str(STATIC_PATH), template_folder=str(TEMPLATES_PATH))
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key-change-in-prod')
@@ -114,13 +119,14 @@ def manual_editor_page():
 def git_commit_push(files: List[str], message: str) -> bool:
     """Faz git add, commit e push para ficheiros específicos.
     
-    IMPORTANTE: Sempre tenta push, mesmo sem mudanças locais,
-    para garantir sincronização com GitHub.
+    ✅ CORREÇÃO CRÍTICA:
+    - Usa caminhos absolutos em git add
+    - Sincroniza com sync.py usando REPO_DIR
     """
     try:
         logger.info(f'GIT: Git add, commit, push para {len(files)} ficheiros')
         
-        # CONFIGURAR GIT IDENTITY ANTES DE QUALQUER OPERAÇÃO
+        # CONFIGURAR GIT IDENTITY
         logger.info('GIT: Configurando identidade Git...')
         subprocess.run(
             ['git', 'config', '--global', 'user.name', 'Rental Calendar Sync Bot'],
@@ -158,7 +164,6 @@ def git_commit_push(files: List[str], message: str) -> bool:
                 current_url = result.stdout.decode().strip()
                 logger.info(f'GIT: Remote origin existente: {current_url}')
                 
-                # Se o remote existe mas não tem autenticação, atualizar
                 if github_token and github_owner and github_repo and '@github.com' not in current_url:
                     repo_url = f'https://{github_token}@github.com/{github_owner}/{github_repo}.git'
                     logger.info('GIT: Atualizando remote origin com token de autenticação')
@@ -174,7 +179,6 @@ def git_commit_push(files: List[str], message: str) -> bool:
                 raise subprocess.CalledProcessError(result.returncode, result.args)
                 
         except subprocess.CalledProcessError:
-            # Remote não existe, tentar configurar
             if github_token and github_owner and github_repo:
                 repo_url = f'https://{github_token}@github.com/{github_owner}/{github_repo}.git'
                 logger.info(f'GIT: Adicionando remote origin para {github_owner}/{github_repo}')
@@ -194,16 +198,33 @@ def git_commit_push(files: List[str], message: str) -> bool:
                 logger.error(f'GIT: Variáveis não configuradas - OWNER={github_owner}, REPO={github_repo}, TOKEN={"presente" if github_token else "ausente"}')
                 raise Exception('Variáveis GITHUB_TOKEN/OWNER/REPO não configuradas corretamente')
         
-        # Git add
+        # ✅ CRÍTICO: Git add com caminhos ABSOLUTOS
+        # Isto garante que os ficheiros são encontrados mesmo se estão em caminho absoluto
         for file in files:
-            logger.info(f'GIT: git add {file}')
+            # Converter para caminho absoluto se necessário
+            if os.path.isabs(file):
+                abs_path = file
+            else:
+                abs_path = str(REPO_PATH / file)
+            
+            logger.info(f'GIT: git add {abs_path}')
+            
+            # Verificar se o ficheiro existe
+            if not os.path.exists(abs_path):
+                logger.warning(f'GIT: Ficheiro não encontrado: {abs_path}')
+                continue
+            
+            # ✅ Usar caminho relativo para git (a partir de REPO_PATH)
+            rel_path = os.path.relpath(abs_path, str(REPO_PATH))
+            
             subprocess.run(
-                ['git', 'add', file],
+                ['git', 'add', rel_path],
                 cwd=str(REPO_PATH),
                 check=True,
                 capture_output=True,
                 timeout=30
             )
+            logger.info(f'GIT: Ficheiro adicionado: {rel_path}')
         
         # VERIFICAR SE HÁ MUDANÇAS STAGED
         status_result = subprocess.run(
@@ -240,11 +261,9 @@ def git_commit_push(files: List[str], message: str) -> bool:
         else:
             logger.info('GIT: Sem mudanças staged para commit')
         
-        # SEMPRE TENTAR PUSH (mesmo sem commit local)
-        # Isto garante que ficheiros já no GitHub sejam mantidos sincronizados
+        # SEMPRE TENTAR PUSH
         logger.info('GIT: Verificando estado do branch...')
         try:
-            # Fetch para verificar se há mudanças remotas
             subprocess.run(
                 ['git', 'fetch', 'origin', 'main'],
                 cwd=str(REPO_PATH),
@@ -254,7 +273,6 @@ def git_commit_push(files: List[str], message: str) -> bool:
             )
             logger.info('GIT: Fetch concluído')
             
-            # Verificar se estamos atrás do remote
             result = subprocess.run(
                 ['git', 'rev-list', '--count', 'HEAD..origin/main'],
                 cwd=str(REPO_PATH),
@@ -452,12 +470,7 @@ def api_calendar_manual():
 @app.route('/api/calendar/save', methods=['POST'])
 @api_login_required
 def api_calendar_save():
-    """POST /api/calendar/save - Grava alterações em manual_calendar.ics
-    
-    Suporta:
-    - Intervalo único: {startDate: '2026-02-25', endDate: '2026-02-28', category: 'MANUAL-BLOCK'}
-    - Data individual: {date: '2026-02-25', category: 'MANUAL-BLOCK'} [compatibilidade]
-    """
+    """POST /api/calendar/save - Grava alterações em manual_calendar.ics"""
     try:
         data = request.get_json()
         added = data.get('added', [])
@@ -469,7 +482,6 @@ def api_calendar_save():
         
         editor = ManualEditorHandler()
         
-        # Processar bloqueios MANUAL-BLOCK (suporta intervalos e datas individuais)
         block_intervals = [e for e in added if e['category'] == 'MANUAL-BLOCK' and 'startDate' in e]
         block_dates_single = [e['date'] for e in added if e['category'] == 'MANUAL-BLOCK' and 'date' in e]
         
@@ -482,7 +494,6 @@ def api_calendar_save():
             logger.info(f'API: Bloqueando {len(block_dates_single)} data(s) individual(is)')
             editor.block_dates(block_dates_single)
         
-        # Processar remoções MANUAL-REMOVE (suporta intervalos e datas individuais)
         remove_intervals = [e for e in added if e['category'] == 'MANUAL-REMOVE' and 'startDate' in e]
         remove_dates_single = [e['date'] for e in added if e['category'] == 'MANUAL-REMOVE' and 'date' in e]
         
@@ -495,7 +506,6 @@ def api_calendar_save():
             logger.info(f'API: Removendo eventos em {len(remove_dates_single)} data(s) individual(is)')
             editor.remove_events(remove_dates_single)
         
-        # Limpar eventos
         if removed:
             logger.info(f'API: Limpando {len(removed)} eventos manuais')
             editor.clear_events(removed)
@@ -506,7 +516,6 @@ def api_calendar_save():
         
         logger.info('API: manual_calendar.ics guardado')
         
-        # Git commit + push
         git_success = git_commit_push(
             ['manual_calendar.ics'],
             'manual_calendar.ics - Alterações (editor manual) (AUTO)'
@@ -534,36 +543,32 @@ def api_calendar_save():
         ), 500
 
 # ============================================================================
-# API - CALENDAR NIGHTS (COMPATIBILIDADE v1.4)
+# API - CALENDAR NIGHTS
 # ============================================================================
 
 @app.route('/api/calendar/nights', methods=['GET'])
 @api_login_required
 def api_calendar_nights():
-    """GET /api/calendar/nights - NOITES consolidadas (v1.4 compatível)"""
+    """GET /api/calendar/nights - NOITES consolidadas"""
     try:
         logger.info('API: GET /api/calendar/nights')
         
-        # Carregar eventos
         import_events = ICSHandler.read_ics_file('import_calendar.ics') or []
         manual_events = ICSHandler.read_ics_file('manual_calendar.ics') or []
         logger.info(f'API: Carregados {len(import_events)} eventos (import) + {len(manual_events)} eventos (manual)')
         
-        # Converter para noites
         import_nights = convert_events_to_nights(import_events)
         manual_nights = convert_events_to_nights(manual_events)
         
-        # Aplicar regras de sobrecarga
         final_nights = apply_night_overlay_rules(import_nights, manual_nights)
         logger.info(f'API: {len(final_nights)} noites finais')
         
-        # Mapear cores
         COLORMAP = {
-            'RESERVATION': 'ff0000',      # Vermelho
-            'PREP-TIME': 'ffaa00',        # Laranja
-            'MANUAL-BLOCK': '00ff00',     # Verde Neon
-            'MANUAL-REMOVE': 'ffff00',    # Amarelo
-            'AVAILABLE': '4dd9ff'         # Azul Claro
+            'RESERVATION': 'ff0000',
+            'PREP-TIME': 'ffaa00',
+            'MANUAL-BLOCK': '00ff00',
+            'MANUAL-REMOVE': 'ffff00',
+            'AVAILABLE': '4dd9ff'
         }
         
         nights_with_colors = {}
@@ -593,57 +598,37 @@ def api_calendar_nights():
         ), 500
 
 # ============================================================================
-# API - EVENTS (NOVO EM v1.5 - PARA FRONTEND)
+# API - EVENTS
 # ============================================================================
 
 @app.route('/api/events', methods=['GET'])
 @api_login_required
 def api_events():
-    """GET /api/events - Retorna eventos para renderização de barras no calendário
-    
-    Formato de retorno (compatível com barras visuais):
-    [
-        {
-            "summary": "Reserva VRBO",
-            "start": "2026-02-13",
-            "end": "2026-02-17",
-            "type": "RESERVATION",
-            "color": "#ff0000"
-        },
-        ...
-    ]
-    """
+    """GET /api/events - Retorna eventos para renderização no calendário"""
     try:
-        logger.info('API: GET /api/events (NOVO v1.5)')
+        logger.info('API: GET /api/events')
         
-        # Carregar eventos
         import_events = ICSHandler.read_ics_file('import_calendar.ics') or []
         manual_events = ICSHandler.read_ics_file('manual_calendar.ics') or []
         logger.info(f'API: Carregados {len(import_events)} eventos (import) + {len(manual_events)} eventos (manual)')
         
-        # Converter para noites
         import_nights = convert_events_to_nights(import_events)
         manual_nights = convert_events_to_nights(manual_events)
         
-        # Aplicar regras de sobrecarga
         final_nights = apply_night_overlay_rules(import_nights, manual_nights)
         logger.info(f'API: {len(final_nights)} noites finais')
         
-        # Mapear cores
         COLORMAP = {
-            'RESERVATION': '#ff0000',      # Vermelho
-            'PREP-TIME': '#ffaa00',        # Laranja
-            'MANUAL-BLOCK': '#00ff00',     # Verde Neon
-            'MANUAL-REMOVE': '#ffff00',    # Amarelo
-            'AVAILABLE': '#4dd9ff'         # Azul Claro
+            'RESERVATION': '#ff0000',
+            'PREP-TIME': '#ffaa00',
+            'MANUAL-BLOCK': '#00ff00',
+            'MANUAL-REMOVE': '#ffff00',
+            'AVAILABLE': '#4dd9ff'
         }
         
-        # Agrupar noites por eventos (start, end, type)
-        # Percorrer eventos originais para reconstruir intervalos
         events_list = []
         processed = set()
         
-        # Processar eventos originais (import + manual)
         all_events = import_events + manual_events
         
         for event in all_events:
@@ -664,7 +649,6 @@ def api_events():
             summary = event.get('summary', 'Event')
             
             if isinstance(dtstart, str):
-                # Formato string YYYYMMDD
                 dtstart = f"{dtstart[:4]}-{dtstart[4:6]}-{dtstart[6:8]}"
             
             if isinstance(dtend, str):
@@ -729,7 +713,7 @@ if __name__ == '__main__':
     logger.info('  GET  /api/calendar/manual - Carrega manual_calendar.ics')
     logger.info('  POST /api/calendar/save   - Grava alterações + git push')
     logger.info('  GET  /api/calendar/nights - Retorna NOITES consolidadas')
-    logger.info('  GET  /api/events          - ✅ NOVO v1.5: Eventos para barras visuais')
+    logger.info('  GET  /api/events          - Eventos para barras visuais')
     logger.info('='*80)
     
     debug_mode = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
