@@ -4,7 +4,7 @@
 """
 sync.py - Rental Calendar Sync - Core Sync Logic
 
-Versão: 1.0 Final
+Versão: 1.9 Final
 Data: 01 de fevereiro de 2026
 Desenvolvido por: PBrandão
 """
@@ -30,11 +30,10 @@ except ImportError as e:
 load_dotenv()
 
 # ============================================================
-# CONFIGURAÇÃO - ✅ CORRIGIDA
+# CONFIGURAÇÃO
 # ============================================================
 
-# ✅ CRÍTICO: Usar Path.cwd() para obter pasta de trabalho (Git repo)
-# NÃO usar __file__ porque pode estar em subpasta
+# ✅ Usar Path.cwd() para obter pasta de trabalho (Git repo)
 WORK_DIR = Path.cwd()
 SCRIPT_DIR = Path(__file__).parent.absolute()
 logger_instance = None
@@ -79,7 +78,6 @@ logger.info(f"MASTER_CALENDAR_PATH: {MASTER_CALENDAR_PATH}")
 logger.info(f"MANUAL_CALENDAR_PATH: {MANUAL_CALENDAR_PATH}")
 
 # ✅ CRÍTICO: Exportar REPO_DIR para main.py poder importar
-# Isto garante que main.py e sync.py usam o MESMO caminho
 __all__ = ['sync_calendars', 'convert_events_to_nights', 'apply_night_overlay_rules', 'REPO_DIR']
 
 # ============================================================
@@ -234,24 +232,31 @@ def download_calendar(url: str, source: str) -> Optional[Calendar]:
         log_error(f"Erro ao descarregar {source}: {e}")
         return None
 
-def fetch_all_calendars() -> Optional[Dict[str, Optional[Calendar]]]:
-    """Download all calendars or load from import_calendar.ics if it exists."""
+def fetch_all_calendars(force_download: bool = False) -> Optional[Dict[str, Optional[Calendar]]]:
+    """Download all calendars or load from import_calendar.ics if it exists.
+    
+    Args:
+        force_download: Se True, força download fresco ignorando cache local
+    """
     log_info("STEP 1: Importing calendars...")
     
-    try:
-        path = Path(IMPORT_CALENDAR_PATH)
-        if path.exists():
-            log_info(f"Loading existing {IMPORT_CALENDAR_PATH}...")
-            with path.open('rb') as f:
-                cal = Calendar.from_ical(f.read())
-            return {
-                'IMPORT': cal,
-                'AIRBNB': None,
-                'BOOKING': None,
-                'VRBO': None,
-            }
-    except Exception as e:
-        log_warning(f"Error loading existing import_calendar.ics: {e}")
+    if not force_download:
+        try:
+            path = Path(IMPORT_CALENDAR_PATH)
+            if path.exists():
+                log_info(f"Loading existing {IMPORT_CALENDAR_PATH}...")
+                with path.open('rb') as f:
+                    cal = Calendar.from_ical(f.read())
+                return {
+                    'IMPORT': cal,
+                    'AIRBNB': None,
+                    'BOOKING': None,
+                    'VRBO': None,
+                }
+        except Exception as e:
+            log_warning(f"Error loading existing import_calendar.ics: {e}")
+    else:
+        log_info("🔄 FORCE DOWNLOAD: Ignorando cache, baixando calendários frescos...")
     
     calendars = {
         'AIRBNB': download_calendar(AIRBNB_ICAL_URL, 'AIRBNB'),
@@ -626,10 +631,13 @@ def merge_calendars(import_cal: Calendar, manual_cal: Optional[Calendar]) -> Cal
 def export_to_file(cal: Calendar, filepath: str) -> bool:
     """Export calendar."""
     try:
-        # ✅ CRÍTICO: Garantir que a pasta existe
+        # Garantir que a pasta existe
         Path(filepath).parent.mkdir(parents=True, exist_ok=True)
         
+        # Gerar ICS
         ical_data = cal.to_ical()
+        
+        # Remover line continuations
         ical_data = ical_data.replace(b'\r\n ', b'').replace(b'\n ', b'')
         
         with open(filepath, 'wb') as f:
@@ -642,10 +650,14 @@ def export_to_file(cal: Calendar, filepath: str) -> bool:
         log_error(f"Erro ao exportar {filepath}: {e}")
         return False
 
-def sync_local() -> Dict[str, Any]:
-    """Main sync."""
+def sync_local(force_download: bool = False) -> Dict[str, Any]:
+    """Main sync.
+    
+    Args:
+        force_download: Se True, força download fresco de calendários externos
+    """
     try:
-        calendars = fetch_all_calendars()
+        calendars = fetch_all_calendars(force_download=force_download)
         if calendars is None:
             return {'status': 'error', 'message': 'Nenhum calendário importado'}
         
@@ -683,20 +695,25 @@ def sync_local() -> Dict[str, Any]:
         log_error(traceback.format_exc())
         return {'status': 'error', 'message': str(e)}
 
-def sync_calendars() -> bool:
-    """Compatibilidade com main.py."""
-    result = sync_local()
+def sync_calendars(force_download: bool = False) -> bool:
+    """Compatibilidade com main.py.
+    
+    Args:
+        force_download: Se True, força download fresco ignorando cache
+    """
+    result = sync_local(force_download=force_download)
     return result.get('status') == 'success'
 
 if __name__ == '__main__':
     log_info('=' * 70)
-    log_info('CALENDAR SYNCHRONIZATION - v1.7 FINAL (REPO_DIR Exportado)')
+    log_info('CALENDAR SYNCHRONIZATION - v1.9 FINAL (Force Download)')
     log_info(f'Timestamp: {datetime.now().isoformat()}')
     log_info(f'Config: TP antes={BUFFER_DAYS_BEFORE}d, TP depois={BUFFER_DAYS_AFTER}d')
     log_info(f'Repo directory: {REPO_DIR}')
     log_info('=' * 70)
     
-    result = sync_local()
+    # CLI sempre força download
+    result = sync_local(force_download=True)
     
     if result.get('status') == 'error':
         log_error(f"SYNC FAILED: {result.get('message')}")
