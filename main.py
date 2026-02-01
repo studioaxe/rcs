@@ -341,38 +341,58 @@ def api_session():
     session_info = AuthManager.get_session_info()
     return jsonify(status='success', session=session_info)
 
+from functools import wraps
+
+# Chave de API para proteger endpoints de automação
+API_SECRET_KEY = os.getenv('API_SECRET_KEY')
+
+def api_key_required(f):
+    """Decorator para exigir chave de API em endpoints de automação."""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not API_SECRET_KEY:
+            logger.critical("API_SECRET_KEY não está configurada no ambiente!")
+            return jsonify(error="Configuração de segurança do servidor incompleta"), 500
+            
+        key = request.headers.get('X-API-Key')
+        if key != API_SECRET_KEY:
+            logger.warning(f"Acesso negado ao endpoint de API. Chave: {'presente' if key else 'ausente'}")
+            return jsonify(error="Acesso não autorizado"), 401
+        
+        return f(*args, **kwargs)
+    return decorated_function
+
+# ... (manter o resto do ficheiro) ...
+
 # ============================================================================
 # API - SYNC
 # ============================================================================
 
 @app.route('/api/sync', methods=['POST'])
-@api_login_required
+@api_key_required
 def api_sync():
-    """Força sincronização imediata."""
+    """Força sincronização imediata, usado pela automação do GitHub."""
     try:
-        should_notify = request.args.get('notify', 'true').lower() == 'true'
-        
+        # A automação deve sempre descarregar dados frescos
+        force_download = request.args.get('force', 'true').lower() == 'true'
+        source = request.args.get('source', 'desconhecida')
+
         logger.info('='*80)
-        logger.info(f"API: Sincronização iniciada (Manual) - Notificar: {should_notify}")
+        logger.info(f"API: Sincronização iniciada (via API Key) - Fonte: {source}")
         logger.info('='*80)
         
-        success = sync_calendars()
+        success = sync_calendars(force_download=force_download)
         
         if success:
             logger.info('='*80)
             logger.info('API: Sincronização concluída com sucesso')
             logger.info('='*80)
             
+            # Commit de todos os ficheiros de calendário
             git_commit_push(
-                ['import_calendar.ics', 'master_calendar.ics'],
-                'import_calendar.ics + master_calendar.ics - Sincronização automática (AUTO)'
+                ['import_calendar.ics', 'manual_calendar.ics', 'master_calendar.ics'],
+                f'Sincronização automática de calendários (Fonte: {source})'
             )
-            
-            if should_notify:
-                logger.info("Enviando notificação de sucesso...")
-                notifier.send_success(total_events=0, reserved_count=0)
-            else:
-                logger.info("Omitindo notificação de sucesso (notify=false).")
             
             return jsonify(
                 status='success',
@@ -391,7 +411,7 @@ def api_sync():
             
     except Exception as e:
         logger.error('='*80)
-        logger.error(f'API: Erro na sincronização: {e}')
+        logger.error(f'API: Erro na sincronização: {e}', exc_info=True)
         logger.error('='*80)
         notifier.send_error(f'API sync error: {str(e)}')
         return jsonify(
@@ -514,21 +534,39 @@ def api_calendar_save():
             logger.error('API: Erro ao guardar manual_calendar.ics')
             return jsonify(success=False, message='Erro ao guardar manual_calendar.ics'), 500
         
-        logger.info('API: manual_calendar.ics guardado')
+        logger.info('API: manual_calendar.ics guardado. A re-sincronizar master_calendar.ics...')
         
+        # ✅ CRÍTICO: Re-sincronizar para atualizar o master_calendar.ics
+        sync_success = sync_calendars(force_download=False)
+        if not sync_success:
+            logger.error('API: Erro ao re-sincronizar calendários após guardar alterações manuais.')
+            # Mesmo com erro de sync, o manual_calendar.ics foi guardado.
+            # O git push vai na mesma para não perder as alterações manuais.
+        
+        files_to_commit = [
+            'manual_calendar.ics',
+            'master_calendar.ics'
+        ]
+        
+        # Opcional: Adicionar o import_calendar.ics se ele foi modificado
+        # Neste fluxo, o mais provável é que não tenha sido, mas por segurança...
+        if sync_success:
+            files_to_commit.append('import_calendar.ics')
+            
         git_success = git_commit_push(
-            ['manual_calendar.ics'],
-            'manual_calendar.ics - Alterações (editor manual) (AUTO)'
+            files_to_commit,
+            'Calendários atualizados (manual + master) - via editor (AUTO)'
         )
         
         logger.info('='*80)
         
         return jsonify(
             success=True,
-            message='Alterações guardadas com sucesso',
+            message='Alterações guardadas e calendários sincronizados com sucesso',
             events_added=len(added),
             events_removed=len(removed),
             git_synced=git_success,
+            sync_success=sync_success,
             timestamp=datetime.now().isoformat()
         ), 200
         
