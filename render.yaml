@@ -25,6 +25,14 @@ services:
         value: true
       - key: REPO_PATH
         value: /mnt/data
+      - key: GIT_AUTHOR_NAME
+        value: "Rental Calendar Sync Bot"
+      - key: GIT_AUTHOR_EMAIL
+        value: "noreply@render.com"
+      - key: GIT_COMMITTER_NAME
+        value: "Rental Calendar Sync Bot"
+      - key: GIT_COMMITTER_EMAIL
+        value: "noreply@render.com"
 
       # As seguintes devem ser definidas no painel do Render com valores reais
       - key: FLASK_SECRET_KEY
