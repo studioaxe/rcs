@@ -165,9 +165,9 @@ def git_commit_push(files: List[str], message: str) -> bool:
                 return False
         
         # Git push
-        logger.info('GIT: git push')
+        logger.info('GIT: git push origin main')
         subprocess.run(
-            ['git', 'push'],
+            ['git', 'push', 'origin', 'main'],
             cwd=str(REPO_PATH),
             check=True,
             capture_output=True,
