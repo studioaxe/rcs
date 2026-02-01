@@ -25,18 +25,30 @@ from backend.notifier import EmailNotifier
 from backend.ics import ICSHandler
 from backend.manual_editor import ManualEditorHandler
 
-# ✅ CRÍTICO: Usar o mesmo REPO_DIR que sync.py
+# ✅ v2.1: Lógica de Deteção de Caminho para Aplicação (Render vs. Local)
+# REPO_PATH é a raiz do repositório Git (para operações git)
+# APP_ROOT_PATH é a raiz da aplicação Flask (onde estão templates, static, etc.)
 REPO_PATH = Path(REPO_DIR)
-STATIC_PATH = REPO_PATH / "static"
-TEMPLATES_PATH = REPO_PATH / "templates"
+APP_ROOT_PATH = REPO_PATH
 
+# No ambiente Render, o código-fonte fica dentro de um subdiretório 'src'
+if os.getenv('RENDER') == 'true':
+    APP_ROOT_PATH = REPO_PATH / "src"
+
+# Caminhos para Flask, baseados na raiz da aplicação
+STATIC_PATH = APP_ROOT_PATH / "static"
+TEMPLATES_PATH = APP_ROOT_PATH / "templates"
+
+# Certificar que as pastas existem (importante para ambientes como Docker ou builds limpos)
 STATIC_PATH.mkdir(exist_ok=True)
 TEMPLATES_PATH.mkdir(exist_ok=True)
 
+# Configuração de logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
+        # O log da app deve ficar na raiz do repositório, não na pasta 'src'
         logging.FileHandler(REPO_PATH / "app.log", encoding='utf-8'),
         logging.StreamHandler()
     ]
@@ -44,10 +56,12 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-logger.info(f"REPO_PATH: {REPO_PATH}")
+logger.info(f"REPO_PATH (para Git): {REPO_PATH}")
+logger.info(f"APP_ROOT_PATH (para Flask): {APP_ROOT_PATH}")
 logger.info(f"STATIC_PATH: {STATIC_PATH}")
 logger.info(f"TEMPLATES_PATH: {TEMPLATES_PATH}")
 
+# Inicialização da App Flask com os caminhos corretos
 app = Flask(__name__, static_folder=str(STATIC_PATH), template_folder=str(TEMPLATES_PATH))
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key-change-in-prod')
 app.config['SESSION_COOKIE_SECURE'] = os.getenv('FLASK_SESSION_SECURE', 'False').lower() == 'true'
