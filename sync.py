@@ -39,18 +39,15 @@ def find_repo_dir() -> Path:
     # 1. Prioridade: Variável de ambiente do Render
     render_root = os.getenv('RENDER_PROJECT_ROOT')
     if render_root:
-        logger.info(f"✅ Variável de ambiente RENDER_PROJECT_ROOT encontrada: {render_root}")
         return Path(render_root)
 
     # 2. Fallback: Procurar '.git' a partir do diretório atual
     work_dir = Path.cwd()
     if (work_dir / '.git').exists():
-        logger.info(f"✅ Diretório de trabalho contém '.git': {work_dir}")
         return work_dir
     
     # 3. Fallback final: Usar o diretório do script (menos fiável)
     script_dir = Path(__file__).parent.absolute()
-    logger.warning(f"⚠️ Usando diretório do script como fallback: {script_dir}")
     return script_dir
 
 # Obter o diretório do repositório
