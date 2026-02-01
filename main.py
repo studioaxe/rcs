@@ -420,6 +420,63 @@ def api_sync():
             timestamp=datetime.now().isoformat()
         ), 500
 
+@app.route('/api/sync-manual', methods=['POST'])
+@api_login_required
+def api_sync_manual():
+    """Força sincronização imediata a partir da UI (requer login)."""
+    try:
+        user = AuthManager.get_current_user()
+        should_notify = request.args.get('notify', 'true').lower() == 'true'
+        
+        logger.info('='*80)
+        logger.info(f"API: Sincronização MANUAL iniciada por utilizador: {user} | Notificar: {should_notify}")
+        logger.info('='*80)
+        
+        # Forçar download para garantir que os calendários externos estão atualizados
+        success = sync_calendars(force_download=True)
+        
+        if success:
+            logger.info('='*80)
+            logger.info('API: Sincronização manual concluída com sucesso')
+            logger.info('='*80)
+            
+            # Após uma sincronização manual, tanto o import como o master podem ter mudado
+            git_commit_push(
+                ['import_calendar.ics', 'master_calendar.ics'],
+                f'Sincronização manual de calendários (utilizador: {user})'
+            )
+            
+            if should_notify:
+                logger.info("Enviando notificação de sucesso...")
+                # Considerar passar dados reais para o notificador
+                notifier.send_success(total_events=0, reserved_count=0)
+            
+            return jsonify(
+                status='success',
+                message='Sincronização completada com sucesso',
+                timestamp=datetime.now().isoformat()
+            ), 200
+        else:
+            logger.error('='*80)
+            logger.error('API: Sincronização manual falhou')
+            logger.error('='*80)
+            return jsonify(
+                status='error',
+                message='Erro na sincronização',
+                timestamp=datetime.now().isoformat()
+            ), 500
+            
+    except Exception as e:
+        logger.error('='*80)
+        logger.error(f'API: Erro na sincronização manual: {e}', exc_info=True)
+        logger.error('='*80)
+        notifier.send_error(f'API sync error: {str(e)}')
+        return jsonify(
+            status='error',
+            message=str(e),
+            timestamp=datetime.now().isoformat()
+        ), 500
+
 # ============================================================================
 # API - CALENDAR (IMPORT/MANUAL/SAVE)
 # ============================================================================

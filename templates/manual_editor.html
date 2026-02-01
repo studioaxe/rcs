@@ -736,7 +736,7 @@
 
                 // 🔄 SINCRONIZAR PRIMEIRO
                 updateProgressBar(25);
-                const syncUrl = options.notify ? '/api/sync?notify=true' : '/api/sync?notify=false';
+                const syncUrl = options.notify ? '/api/sync-manual?notify=true' : '/api/sync-manual?notify=false';
                 const syncResponse = await fetch(syncUrl, { method: 'POST' });
                 if (!syncResponse.ok) console.warn('Aviso: Sincronização falhou, continuando com dados em cache');
                 
