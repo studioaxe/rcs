@@ -33,19 +33,28 @@ load_dotenv()
 # CONFIGURAÇÃO
 # ============================================================
 
-# ✅ Usar Path.cwd() para obter pasta de trabalho (Git repo)
-WORK_DIR = Path.cwd()
-SCRIPT_DIR = Path(__file__).parent.absolute()
-logger_instance = None
+# ✅ v2.0: Lógica de deteção de diretório robustecida para Render
+def find_repo_dir() -> Path:
+    """Encontra o diretório raiz do repositório, com suporte para Render."""
+    # 1. Prioridade: Variável de ambiente do Render
+    render_root = os.getenv('RENDER_PROJECT_ROOT')
+    if render_root:
+        logger.info(f"✅ Variável de ambiente RENDER_PROJECT_ROOT encontrada: {render_root}")
+        return Path(render_root)
 
-# Tentar usar WORK_DIR se existir .git
-if (WORK_DIR / '.git').exists():
-    REPO_DIR = WORK_DIR
-    logger_msg = f"✅ Git repo detectado em: {REPO_DIR}"
-else:
-    # Fallback para SCRIPT_DIR
-    REPO_DIR = SCRIPT_DIR
-    logger_msg = f"⚠️ Usando SCRIPT_DIR: {REPO_DIR}"
+    # 2. Fallback: Procurar '.git' a partir do diretório atual
+    work_dir = Path.cwd()
+    if (work_dir / '.git').exists():
+        logger.info(f"✅ Diretório de trabalho contém '.git': {work_dir}")
+        return work_dir
+    
+    # 3. Fallback final: Usar o diretório do script (menos fiável)
+    script_dir = Path(__file__).parent.absolute()
+    logger.warning(f"⚠️ Usando diretório do script como fallback: {script_dir}")
+    return script_dir
+
+# Obter o diretório do repositório
+REPO_DIR = find_repo_dir()
 
 # Caminhos dos ficheiros - ✅ SEMPRE na raiz do repo Git
 IMPORT_CALENDAR_PATH = str(REPO_DIR / 'import_calendar.ics')
