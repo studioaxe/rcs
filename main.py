@@ -3,10 +3,13 @@
 
 """
 main.py - Rental Calendar Sync - Flask API
-
-Versão: 1.0 Final
-Data: 01 de fevereiro de 2026
+Versão: 1.1 - CORRIGIDO
+Data: 02 de fevereiro de 2026
 Desenvolvido por: PBrandão
+
+✅ CORREÇÃO v1.1: 
+- update_github_file() com fallback para APP_ROOT_PATH
+- download_github_file() para garantir manual_calendar.ics antes do sync
 """
 
 import os
@@ -19,6 +22,7 @@ from typing import Dict, List, Tuple, Optional
 from flask import Flask, render_template, request, redirect, url_for, jsonify, session
 
 sys.path.insert(0, str(Path(__file__).parent))
+
 from auth import AuthManager, login_required, api_login_required
 from sync import sync_calendars, convert_events_to_nights, apply_night_overlay_rules, REPO_DIR
 from backend.notifier import EmailNotifier
@@ -26,8 +30,6 @@ from backend.ics import ICSHandler
 from backend.manual_editor import ManualEditorHandler
 
 # ✅ v2.1: Lógica de Deteção de Caminho para Aplicação (Render vs. Local)
-# REPO_PATH é a raiz do repositório Git (para operações git)
-# APP_ROOT_PATH é a raiz da aplicação Flask (onde estão templates, static, etc.)
 REPO_PATH = Path(REPO_DIR)
 APP_ROOT_PATH = REPO_PATH
 
@@ -39,7 +41,7 @@ if os.getenv('RENDER') == 'true':
 STATIC_PATH = APP_ROOT_PATH / "static"
 TEMPLATES_PATH = APP_ROOT_PATH / "templates"
 
-# Certificar que as pastas existem (importante para ambientes como Docker ou builds limpos)
+# Certificar que as pastas existem
 STATIC_PATH.mkdir(exist_ok=True)
 TEMPLATES_PATH.mkdir(exist_ok=True)
 
@@ -48,20 +50,16 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        # O log da app deve ficar na raiz do repositório, não na pasta 'src'
         logging.FileHandler(REPO_PATH / "app.log", encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
 
 logger = logging.getLogger(__name__)
-
 logger.info(f"REPO_PATH (para Git): {REPO_PATH}")
 logger.info(f"APP_ROOT_PATH (para Flask): {APP_ROOT_PATH}")
-logger.info(f"STATIC_PATH: {STATIC_PATH}")
-logger.info(f"TEMPLATES_PATH: {TEMPLATES_PATH}")
 
-# Inicialização da App Flask com os caminhos corretos
+# Inicialização da App Flask
 app = Flask(__name__, static_folder=str(STATIC_PATH), template_folder=str(TEMPLATES_PATH))
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key-change-in-prod')
 app.config['SESSION_COOKIE_SECURE'] = os.getenv('FLASK_SESSION_SECURE', 'False').lower() == 'true'
@@ -127,22 +125,17 @@ def manual_editor_page():
     return render_template('manual_editor.html', user=user)
 
 # ============================================================================
-# FUNÇÕES AUXILIARES
+# FUNÇÕES AUXILIARES - GITHUB API
 # ============================================================================
 
 import base64
 import requests
-
-# ============================================================================
-# FUNÇÕES AUXILIARES - GITHUB API
-# ============================================================================
 
 def get_github_file_sha(filepath: str) -> Optional[str]:
     """Obtém o SHA de um ficheiro no repositório via API do GitHub."""
     github_token = os.getenv('GITHUB_TOKEN')
     github_owner = os.getenv('GITHUB_OWNER')
     github_repo = os.getenv('GITHUB_REPO')
-    
     api_url = f"https://api.github.com/repos/{github_owner}/{github_repo}/contents/{filepath}"
     headers = {
         'Authorization': f'token {github_token}',
@@ -156,14 +149,56 @@ def get_github_file_sha(filepath: str) -> Optional[str]:
             logger.info(f"GIT API: SHA obtido para '{filepath}': {sha}")
             return sha
         elif response.status_code == 404:
-            logger.warning(f"GIT API: Ficheiro '{filepath}' não encontrado no repositório. Será criado.")
+            logger.warning(f"GIT API: Ficheiro '{filepath}' não encontrado no repositório.")
             return None
         else:
-            logger.error(f"GIT API: Erro ao obter SHA para '{filepath}'. Status: {response.status_code}, Resposta: {response.text}")
+            logger.error(f"GIT API: Erro ao obter SHA para '{filepath}'. Status: {response.status_code}")
             return None
     except requests.exceptions.RequestException as e:
         logger.error(f"GIT API: Exceção ao obter SHA para '{filepath}': {e}")
         return None
+
+def download_github_file(filepath: str) -> bool:
+    """✅ NOVO v1.1: Descarrega ficheiro do GitHub para disco local.
+    
+    Garante que manual_calendar.ics existe localmente antes do sync.
+    """
+    github_token = os.getenv('GITHUB_TOKEN')
+    github_owner = os.getenv('GITHUB_OWNER')
+    github_repo = os.getenv('GITHUB_REPO')
+    api_url = f"https://api.github.com/repos/{github_owner}/{github_repo}/contents/{filepath}"
+    headers = {
+        'Authorization': f'token {github_token}',
+        'Accept': 'application/vnd.github.v3+json'
+    }
+    
+    try:
+        response = requests.get(api_url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            content_base64 = response.json()['content']
+            content_bytes = base64.b64decode(content_base64)
+            
+            # ✅ Tentar primeiro APP_ROOT_PATH (onde o sync.py procura)
+            local_file_path = APP_ROOT_PATH / filepath
+            
+            # Se APP_ROOT_PATH não existir, usar REPO_PATH
+            if not local_file_path.parent.exists():
+                local_file_path = REPO_PATH / filepath
+            
+            with open(local_file_path, 'wb') as f:
+                f.write(content_bytes)
+            
+            logger.info(f"GIT API: Ficheiro '{filepath}' descarregado com sucesso para {local_file_path}")
+            return True
+        elif response.status_code == 404:
+            logger.info(f"GIT API: Ficheiro '{filepath}' não existe no repositório (primeira execução).")
+            return False
+        else:
+            logger.error(f"GIT API: Erro ao descarregar '{filepath}'. Status: {response.status_code}")
+            return False
+    except Exception as e:
+        logger.error(f"GIT API: Exceção ao descarregar '{filepath}': {e}")
+        return False
 
 def update_github_file(filepath: str, commit_message: str) -> bool:
     """Lê um ficheiro local e atualiza-o no GitHub via API.
@@ -223,7 +258,6 @@ def update_github_file(filepath: str, commit_message: str) -> bool:
         logger.error(f"GIT API: Exceção ao atualizar ficheiro '{filepath}': {e}")
         return False
 
-
 # ============================================================================
 # API - SESSION
 # ============================================================================
@@ -246,7 +280,7 @@ def api_key_required(f):
         if not API_SECRET_KEY:
             logger.critical("API_SECRET_KEY não está configurada no ambiente!")
             return jsonify(error="Configuração de segurança do servidor incompleta"), 500
-            
+        
         key = request.headers.get('X-API-Key')
         if key != API_SECRET_KEY:
             logger.warning(f"Acesso negado ao endpoint de API. Chave: {'presente' if key else 'ausente'}")
@@ -254,8 +288,6 @@ def api_key_required(f):
         
         return f(*args, **kwargs)
     return decorated_function
-
-# ... (manter o resto do ficheiro) ...
 
 # ============================================================================
 # API - SYNC
@@ -266,10 +298,9 @@ def api_key_required(f):
 def api_sync():
     """Força sincronização imediata, usado pela automação do GitHub."""
     try:
-        # A automação deve sempre descarregar dados frescos
         force_download = request.args.get('force', 'true').lower() == 'true'
         source = request.args.get('source', 'desconhecida')
-
+        
         logger.info('='*80)
         logger.info(f"API: Sincronização iniciada (via API Key) - Fonte: {source}")
         logger.info('='*80)
@@ -364,19 +395,28 @@ def api_sync_manual():
 @app.route('/api/calendar/import', methods=['GET'])
 @api_login_required
 def api_calendar_import():
-    """GET /api/calendar/import - FLUXO CRÍTICO COMPLETO"""
+    """GET /api/calendar/import - FLUXO CRÍTICO COMPLETO
+    
+    ✅ v1.1: Descarrega manual_calendar.ics do GitHub antes do sync
+    """
     try:
         logger.info('='*80)
         logger.info('API: GET /api/calendar/import')
         logger.info('API: EXECUTANDO SYNC.PY + GIT (CRÍTICO)...')
         logger.info('='*80)
         
+        # ✅ NOVO v1.1: Descarregar manual_calendar.ics do GitHub ANTES do sync
+        logger.info('API: Descarregando manual_calendar.ics do GitHub...')
+        download_github_file('manual_calendar.ics')
+        
         logger.info('API: Iniciando sync_calendars()...')
         sync_start = datetime.now()
+        
         try:
             sync_success = sync_calendars(force_download=True)
             sync_end = datetime.now()
             sync_duration = (sync_end - sync_start).total_seconds()
+            
             if sync_success:
                 logger.info(f'API: Sync.py concluído com SUCESSO ({sync_duration:.2f}s)')
             else:
@@ -392,6 +432,7 @@ def api_calendar_import():
         logger.info('API: Carregando import_calendar.ics ATUALIZADO...')
         editor = ManualEditorHandler()
         events = editor.load_import_events()
+        
         logger.info(f'API: Carregados {len(events)} eventos do import_calendar.ics')
         logger.info('='*80)
         
@@ -467,16 +508,16 @@ def api_calendar_save():
         logger.info("API: manual_calendar.ics guardado localmente. Atualizando no GitHub...")
         user = AuthManager.get_current_user() or 'unknown'
         git_success_manual = update_github_file('manual_calendar.ics', f'Editor manual: {user}')
-
+        
         logger.info("API: Re-sincronizar para atualizar master_calendar.ics...")
         sync_success = sync_calendars(force_download=False)
+        
         if not sync_success:
             logger.error('API: Erro ao re-sincronizar calendários após guardar alterações manuais.')
-            # Nota: Mesmo com este erro, o manual_calendar.ics já foi enviado para o GitHub.
         
         logger.info("API: Sincronização local concluída. Atualizando master no GitHub...")
         git_success_master = update_github_file('master_calendar.ics', f'Update master por editor manual (User: {user})')
-
+        
         logger.info('='*80)
         
         return jsonify(
@@ -512,12 +553,13 @@ def api_calendar_nights():
         
         import_events = ICSHandler.read_ics_file('import_calendar.ics') or []
         manual_events = ICSHandler.read_ics_file('manual_calendar.ics') or []
+        
         logger.info(f'API: Carregados {len(import_events)} eventos (import) + {len(manual_events)} eventos (manual)')
         
         import_nights = convert_events_to_nights(import_events)
         manual_nights = convert_events_to_nights(manual_events)
-        
         final_nights = apply_night_overlay_rules(import_nights, manual_nights)
+        
         logger.info(f'API: {len(final_nights)} noites finais')
         
         COLORMAP = {
@@ -567,12 +609,13 @@ def api_events():
         
         import_events = ICSHandler.read_ics_file('import_calendar.ics') or []
         manual_events = ICSHandler.read_ics_file('manual_calendar.ics') or []
+        
         logger.info(f'API: Carregados {len(import_events)} eventos (import) + {len(manual_events)} eventos (manual)')
         
         import_nights = convert_events_to_nights(import_events)
         manual_nights = convert_events_to_nights(manual_events)
-        
         final_nights = apply_night_overlay_rules(import_nights, manual_nights)
+        
         logger.info(f'API: {len(final_nights)} noites finais')
         
         COLORMAP = {
@@ -585,7 +628,6 @@ def api_events():
         
         events_list = []
         processed = set()
-        
         all_events = import_events + manual_events
         
         for event in all_events:
@@ -668,9 +710,9 @@ if __name__ == '__main__':
     logger.info('ENDPOINTS DISPONÍVEIS:')
     logger.info('  GET  /api/calendar/import - Executa SYNC + Git push')
     logger.info('  GET  /api/calendar/manual - Carrega manual_calendar.ics')
-    logger.info('  POST /api/calendar/save   - Grava alterações + git push')
+    logger.info('  POST /api/calendar/save - Grava alterações + git push')
     logger.info('  GET  /api/calendar/nights - Retorna NOITES consolidadas')
-    logger.info('  GET  /api/events          - Eventos para barras visuais')
+    logger.info('  GET  /api/events - Eventos para barras visuais')
     logger.info('='*80)
     
     debug_mode = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
