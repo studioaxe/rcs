@@ -5,7 +5,7 @@
 auth.py - Gestão de Autenticação e Segurança
 
 Versão: 1.0 Final
-Data: 01 de fevereiro de 2026
+Data: 02 de fevereiro de 2026
 Desenvolvido por: PBrandão
 """
 

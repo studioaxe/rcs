@@ -1,16 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
 sync.py - Rental Calendar Sync - Core Sync Logic
-Versão: 2.0 - CORRIGIDO MANUAL-REMOVE/MANUAL-BLOCK
+
+Versão: 1.0 Final
 Data: 02 de fevereiro de 2026
 Desenvolvido por: PBrandão
-
-✅ CORREÇÃO v2.0:
-- merge_calendars() agora processa CORRETAMENTE MANUAL-REMOVE e MANUAL-BLOCK
-- Lógica de merge refatorada para incluir TODOS os eventos manuais no master
-- Log detalhado do processo de merge para debugging
 """
 
 import os
@@ -73,7 +68,7 @@ logging.basicConfig(
     handlers=[
         logging.FileHandler(LOG_FILE, encoding='utf-8'),
         logging.StreamHandler(),
-    ]
+    ],
 )
 
 logger = logging.getLogger(__name__)
@@ -92,12 +87,16 @@ def to_date(dt_obj) -> Optional[date]:
     """Converte QUALQUER tipo de data para date."""
     if dt_obj is None:
         return None
+    
     if hasattr(dt_obj, 'dt'):
         dt_obj = dt_obj.dt
+    
     if isinstance(dt_obj, date) and not isinstance(dt_obj, datetime):
         return dt_obj
+    
     if isinstance(dt_obj, datetime):
         return dt_obj.date()
+    
     if isinstance(dt_obj, str):
         dt_obj = str(dt_obj).strip()
         if len(dt_obj) == 8 and dt_obj.isdigit():
@@ -110,20 +109,25 @@ def to_date(dt_obj) -> Optional[date]:
                 return datetime.strptime(dt_obj, '%Y-%m-%d').date()
             except (ValueError, TypeError):
                 pass
+    
     return None
 
 def to_datetime(dt_obj) -> Optional[datetime]:
     """Converte para datetime com UTC."""
     if dt_obj is None:
         return None
+    
     if hasattr(dt_obj, 'dt'):
         dt_obj = dt_obj.dt
+    
     if isinstance(dt_obj, datetime):
         if dt_obj.tzinfo is None:
             return dt_obj.replace(tzinfo=pytz.UTC)
         return dt_obj
+    
     if isinstance(dt_obj, date):
         return datetime.combine(dt_obj, datetime.min.time()).replace(tzinfo=pytz.UTC)
+    
     return None
 
 def normalize_uid(uid: str) -> str:
@@ -207,7 +211,7 @@ def apply_night_overlay_rules(import_nights: Dict[str, Dict], manual_nights: Dic
         elif manual_category == 'MANUAL-BLOCK':
             if not import_event or import_category == 'AVAILABLE':
                 log_success(f"[OVERLAY] {night_date}: MANUAL-BLOCK bloqueia")
-                final_nights[night_date] = manual_event
+            final_nights[night_date] = manual_event
         else:
             final_nights[night_date] = manual_event
     
@@ -276,8 +280,8 @@ def fetch_all_calendars(force_download: bool = False) -> Optional[Dict[str, Opti
 def extract_events(calendars: Dict[str, Optional[Calendar]]) -> List[Dict]:
     """Extract events."""
     log_info("STEP 2: Extracting events...")
-    
     all_events: List[Dict] = []
+    
     for source, cal in calendars.items():
         if cal is None:
             continue
@@ -291,7 +295,6 @@ def extract_events(calendars: Dict[str, Optional[Calendar]]) -> List[Dict]:
                 if categories_raw:
                     dtstart = component.get('DTSTART')
                     dtend = component.get('DTEND')
-                    
                     event = {
                         'source': source,
                         'uid': str(component.get('UID', '')),
@@ -308,7 +311,6 @@ def extract_events(calendars: Dict[str, Optional[Calendar]]) -> List[Dict]:
                 
                 dtstart = component.get('DTSTART')
                 dtend = component.get('DTEND')
-                
                 event = {
                     'source': source,
                     'uid': str(component.get('UID', '')),
@@ -355,7 +357,6 @@ def deduplicate_events(events: List[Dict]) -> List[Dict]:
 # ============================================================================
 
 def load_manual_calendar() -> Optional[Calendar]:
-    
     try:
         # ✅ Tentar primeiro REPO_PATH (raiz do repositório)
         path = Path(MANUAL_CALENDAR_PATH)
@@ -577,17 +578,17 @@ def create_import_calendar(events: List[Dict]) -> Calendar:
     return cal
 
 # ============================================================================
-# MERGE CALENDARS - ✅ CORRIGIDO v2.0
+# MERGE CALENDARS - ✅ CORRIGIDO v2.1
 # ============================================================================
 
 def merge_calendars(import_cal: Calendar, manual_cal: Optional[Calendar]) -> Calendar:
-    """✅ v2.0: Merge com MANUAL-REMOVE e MANUAL-BLOCK FUNCIONAIS.
+    """✅ v2.1: Merge CORRETO - MANUAL-REMOVE NÃO é adicionado ao master.
     
     Lógica corrigida:
     1. Adiciona TODOS os eventos do import_calendar (RESERVATION + PREP-TIME)
     2. Remove PREP-TIME que coincidem com MANUAL-REMOVE
     3. Adiciona TODOS os eventos MANUAL-BLOCK
-    4. Adiciona TODOS os eventos MANUAL-REMOVE (para tracking no master)
+    4. ✅ CORREÇÃO: MANUAL-REMOVE NÃO é adicionado (é apenas instrução)
     """
     log_info("STEP 5: Merging calendars (import + manual)...")
     
@@ -647,7 +648,7 @@ def merge_calendars(import_cal: Calendar, manual_cal: Optional[Calendar]) -> Cal
                 log_warning(f"[MERGE] ❌ PREP-TIME removida: {summary}")
                 prep_time_removed += 1
                 removed += 1
-                continue
+                continue  # NÃO adicionar ao master
             
             log_info(f"[MERGE] Evento adicional: {summary}")
             master_cal.add_component(component)
@@ -666,29 +667,8 @@ def merge_calendars(import_cal: Calendar, manual_cal: Optional[Calendar]) -> Cal
         master_cal.add_component(block['component'])
         included += 1
     
-    # ✅ ETAPA 3: Adicionar MANUAL-REMOVE (para tracking)
-    if manual_cal:
-        for component in manual_cal.walk():
-            if component.name != 'VEVENT':
-                continue
-            
-            categories_raw = component.get('CATEGORIES')
-            if not categories_raw:
-                continue
-            
-            if hasattr(categories_raw, 'to_ical'):
-                try:
-                    categories_str = categories_raw.to_ical().decode().upper()
-                except Exception:
-                    categories_str = str(categories_raw).upper()
-            else:
-                categories_str = str(categories_raw).upper()
-            
-            if 'MANUAL-REMOVE' in categories_str:
-                summary = str(component.get('SUMMARY', '?'))
-                log_info(f"[MERGE] Adicionando MANUAL-REMOVE: {summary}")
-                master_cal.add_component(component)
-                included += 1
+    # ✅ ETAPA 3: MANUAL-REMOVE NÃO é adicionado (apenas instrução)
+    log_info(f"[MERGE] MANUAL-REMOVE processados: {len(manual_removes)} (instruções apenas - não adicionados ao master)")
     
     log_success(f"[MERGE] Calendarios mesclados:")
     log_success(f"  - RESERVATION soberanas: {reservations_included} eventos")
@@ -706,7 +686,6 @@ def export_to_file(cal: Calendar, filepath: str) -> bool:
     """Export calendar."""
     try:
         Path(filepath).parent.mkdir(parents=True, exist_ok=True)
-        
         ical_data = cal.to_ical()
         ical_data = ical_data.replace(b'\r\n ', b'').replace(b'\n ', b'')
         
@@ -763,7 +742,6 @@ def sync_local(force_download: bool = False) -> Dict[str, Any]:
             'master_count': master_events,
             'timestamp': datetime.now().isoformat(),
         }
-        
     except Exception as e:
         log_error(f"Sync failed: {e}")
         import traceback
@@ -785,7 +763,7 @@ def sync_calendars(force_download: bool = False) -> bool:
 
 if __name__ == '__main__':
     log_info('='*70)
-    log_info('CALENDAR SYNCHRONIZATION - v2.0 FINAL (Force Download)')
+    log_info('CALENDAR SYNCHRONIZATION - v2.1 FINAL (MANUAL-REMOVE CORRIGIDO)')
     log_info(f"Timestamp: {datetime.now().isoformat()}")
     log_info(f"Config: TP antes={BUFFER_DAYS_BEFORE}d, TP depois={BUFFER_DAYS_AFTER}d")
     log_info(f"Repo directory: {REPO_DIR}")
@@ -797,7 +775,7 @@ if __name__ == '__main__':
         log_error(f"SYNC FAILED: {result.get('message')}")
         sys.exit(1)
     else:
-        log_success('SYNC COMPLETED SUCCESSFULLY')
+        log_success('✅ SYNC COMPLETED SUCCESSFULLY')
         print()
         print(f"Events downloaded: {result.get('events_downloaded', 0)}")
         print(f"Import calendar: {result.get('import_count', 0)} events")

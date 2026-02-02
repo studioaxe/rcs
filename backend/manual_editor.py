@@ -3,11 +3,10 @@
 
 """
 backend/manual_editor.py - Manual Calendar Editor Handler
-Versão: 1.1 - CORRIGIDO
+
+Versão: 1.0 Final
 Data: 02 de fevereiro de 2026
 Desenvolvido por: PBrandão
-
-✅ CORREÇÃO v1.1: save_manual_calendar() - Modo binário correto
 """
 
 import os

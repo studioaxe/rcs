@@ -3,13 +3,10 @@
 
 """
 main.py - Rental Calendar Sync - Flask API
-Versão: 1.1 - CORRIGIDO
+
+Versão: 1.0 Final
 Data: 02 de fevereiro de 2026
 Desenvolvido por: PBrandão
-
-✅ CORREÇÃO v1.1: 
-- update_github_file() com fallback para APP_ROOT_PATH
-- download_github_file() para garantir manual_calendar.ics antes do sync
 """
 
 import os
