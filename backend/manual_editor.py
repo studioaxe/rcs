@@ -579,7 +579,6 @@ class ManualEditorHandler:
 
     def save_manual_calendar(self) -> bool:
         """Guarda manual_calendar.ics"""
-        """Guarda manual_calendar.ics."""
         try:
             cal = Calendar()
             cal.add('prodid', '-//Rental Manual Calendar//PT')
@@ -588,23 +587,16 @@ class ManualEditorHandler:
             cal.add('x-wr-calname', 'Manual Calendar')
             cal.add('x-wr-timezone', 'Europe/Lisbon')
 
-
             for event in self.manual_events:
                 cal.add_component(event)
 
+            ical_data = cal.to_ical().decode('utf-8')  # Codifica o conteúdo do ficheiro em UTF-8
 
-            ical_data = cal.to_ical()
-            ical_data = ical_data.replace(b'\r\n', b'\n').replace(b'\n', b'\r\n')
-
-
-            with open(MANUAL_CALENDAR_PATH, 'wb') as f:
-                f.write(cal.to_ical().encode('utf-8'))
+            with open(MANUAL_CALENDAR_PATH, 'w') as f:
                 f.write(ical_data)
-
 
             logger.info(f'Guardado {MANUAL_CALENDAR_PATH} com {len(self.manual_events)} eventos')
             return True
-
 
         except Exception as e:
             logger.error(f'Erro ao guardar manual_calendar.ics: {e}')
