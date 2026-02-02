@@ -166,13 +166,21 @@ def get_github_file_sha(filepath: str) -> Optional[str]:
         return None
 
 def update_github_file(filepath: str, commit_message: str) -> bool:
-    """Lê um ficheiro local e atualiza-o no GitHub via API."""
+    """Lê um ficheiro local e atualiza-o no GitHub via API.
+    
+    ✅ v2.2: Procura ficheiro em REPO_PATH e APP_ROOT_PATH (Render compatibility)
+    """
     github_token = os.getenv('GITHUB_TOKEN')
     github_owner = os.getenv('GITHUB_OWNER')
     github_repo = os.getenv('GITHUB_REPO')
 
-    # ✅ Correção v2.1: O ficheiro é lido a partir do REPO_PATH, que é a raiz do repositório.
+    # ✅ v2.2: Tentar primeiro REPO_PATH, depois APP_ROOT_PATH
     local_file_path = REPO_PATH / filepath
+    
+    # Se não existir em REPO_PATH, tentar em APP_ROOT_PATH (ambiente Render com /src)
+    if not local_file_path.exists():
+        local_file_path = APP_ROOT_PATH / filepath
+        logger.info(f"GIT API: Ficheiro não encontrado em REPO_PATH, usando APP_ROOT_PATH: {local_file_path}")
     
     if not local_file_path.exists():
         logger.error(f"GIT API: Ficheiro local '{local_file_path}' não encontrado para upload.")
@@ -185,23 +193,21 @@ def update_github_file(filepath: str, commit_message: str) -> bool:
         logger.error(f"GIT API: Ficheiro local '{local_file_path}' não encontrado para upload.")
         return False
 
-    with open(local_file_path, 'rb') as f:
-        content_bytes = f.read()
-    
     content_base64 = base64.b64encode(content_bytes).decode('utf-8')
-    
     sha = get_github_file_sha(filepath)
-    
+
     api_url = f"https://api.github.com/repos/{github_owner}/{github_repo}/contents/{filepath}"
     headers = {
         'Authorization': f'token {github_token}',
         'Accept': 'application/vnd.github.v3+json'
     }
+
     data = {
         'message': commit_message,
         'content': content_base64,
         'branch': 'main'
     }
+
     if sha:
         data['sha'] = sha
 
@@ -216,6 +222,7 @@ def update_github_file(filepath: str, commit_message: str) -> bool:
     except requests.exceptions.RequestException as e:
         logger.error(f"GIT API: Exceção ao atualizar ficheiro '{filepath}': {e}")
         return False
+
 
 # ============================================================================
 # API - SESSION
