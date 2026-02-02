@@ -116,6 +116,7 @@ def get_config():
 
 # Verify required files/directories exist
 
+def verify_setup() -> bool:
 def verify_setup():
     """Verify setup is complete."""
     required_files = [

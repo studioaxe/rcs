@@ -577,43 +577,40 @@ class ManualEditorHandler:
             return False
 
 
-def save_manual_calendar(self) -> bool:
-    """Guarda manual_calendar.ics"""
-    try:
-        if not os.path.exists(MANUAL_CALENDAR_PATH):
-            raise FileNotFoundError(f"{MANUAL_CALENDAR_PATH} não encontrado")
+    def save_manual_calendar(self) -> bool:
+        """Guarda manual_calendar.ics"""
+        try:
+            if not os.path.exists(MANUAL_CALENDAR_PATH):
+                raise FileNotFoundError(f"{MANUAL_CALENDAR_PATH} não encontrado")
 
-        cal = Calendar()
-        cal.add('prodid', '-//Rental Manual Calendar//PT')
-        cal.add('version', '2.0')
-        cal.add('calscale', 'GREGORIAN')
-        cal.add('x-wr-calname', 'Manual Calendar')
-        cal.add('x-wr-timezone', 'Europe/Lisbon')
+            cal = Calendar()
+            cal.add('prodid', '-//Rental Manual Calendar//PT')
+            cal.add('version', '2.0')
+            cal.add('calscale', 'GREGORIAN')
+            cal.add('x-wr-calname', 'Manual Calendar')
+            cal.add('x-wr-timezone', 'Europe/Lisbon')
 
-        for event in self.manual_events:
-            cal.add_component(event)
+            for event in self.manual_events:
+                cal.add_component(event)
 
-        ical_data = cal.to_ical().decode('utf-8')  # Codifica o conteúdo do ficheiro em UTF-8
+            ical_data = cal.to_ical().decode('utf-8')  # Codifica o conteúdo do ficheiro em UTF-8
 
-        with open(MANUAL_CALENDAR_PATH, 'w') as f:
-            f.write(ical_data)
+            # Verifica se o ficheiro foi guardado corretamente
+            with open(MANUAL_CALENDAR_PATH, 'wb') as f:
+                f.write(ical_data)
 
-        # Verifica se o ficheiro foi guardado corretamente
-        if not os.path.exists(MANUAL_CALENDAR_PATH):
-            raise FileNotFoundError(f"{MANUAL_CALENDAR_PATH} não encontrado")
+            # Verifica se o conteúdo do ficheiro é igual ao esperado
+            with open(MANUAL_CALENDAR_PATH, 'rb') as f:
+                file_data = f.read()
+            if file_data != ical_data:
+                raise ValueError(f"O conteúdo do ficheiro {MANUAL_CALENDAR_PATH} não é igual ao esperado")
 
-        # Verifica se o conteúdo do ficheiro é igual ao esperado
-        with open(MANUAL_CALENDAR_PATH, 'rb') as f:
-            file_data = f.read()
-        if file_data != ical_data:
-            raise ValueError(f"O conteúdo do ficheiro {MANUAL_CALENDAR_PATH} não é igual ao esperado")
+            logger.info(f'Guardado {MANUAL_CALENDAR_PATH} com {len(self.manual_events)} eventos')
+            return True
 
-        logger.info(f'Guardado {MANUAL_CALENDAR_PATH} com {len(self.manual_events)} eventos')
-        return True
-
-    except Exception as e:
-        logger.error(f'Erro ao guardar manual_calendar.ics: {e}')
-        return False
+        except Exception as e:
+            logger.error(f'Erro ao guardar manual_calendar.ics: {e}')
+            return False
         
 
 if __name__ == '__main__':
