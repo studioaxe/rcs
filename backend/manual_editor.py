@@ -577,7 +577,6 @@ class ManualEditorHandler:
             return False
 
 
-/*************  ✨ Windsurf Command 🌟  *************/
     def save_manual_calendar(self) -> bool:
         """Guarda manual_calendar.ics"""
         """Guarda manual_calendar.ics."""
@@ -610,8 +609,6 @@ class ManualEditorHandler:
         except Exception as e:
             logger.error(f'Erro ao guardar manual_calendar.ics: {e}')
             return False
-/*******  60c9bf8a-5350-4272-8b26-720e27a7bf4a  *******/
-
 
 
 if __name__ == '__main__':
