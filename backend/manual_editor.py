@@ -608,6 +608,7 @@ class ManualEditorHandler:
                 for event in self.manual_events:
                     cal.add_component(event)
 
+                f.write(cal.to_ical().decode('utf-8'))  # Codifica o conteúdo do ficheiro em UTF-8
                 ical_data = cal.to_ical().decode('utf-8')  # Codifica o conteúdo do ficheiro em UTF-8
                 f.write(ical_data)
 
