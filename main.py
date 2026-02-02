@@ -165,6 +165,7 @@ def get_github_file_sha(filepath: str) -> Optional[str]:
         logger.error(f"GIT API: Exceção ao obter SHA para '{filepath}': {e}")
         return None
 
+/*************  ✨ Windsurf Command 🌟  *************/
 def update_github_file(filepath: str, commit_message: str) -> bool:
     """Lê um ficheiro local e atualiza-o no GitHub via API."""
     github_token = os.getenv('GITHUB_TOKEN')
@@ -175,6 +176,13 @@ def update_github_file(filepath: str, commit_message: str) -> bool:
     local_file_path = REPO_PATH / filepath
     
     if not local_file_path.exists():
+        logger.error(f"GIT API: Ficheiro local '{local_file_path}' não encontrado para upload.")
+        return False
+
+    try:
+        with open(local_file_path, 'rb') as f:
+            content_bytes = f.read()
+    except FileNotFoundError:
         logger.error(f"GIT API: Ficheiro local '{local_file_path}' não encontrado para upload.")
         return False
 
@@ -209,6 +217,7 @@ def update_github_file(filepath: str, commit_message: str) -> bool:
     except requests.exceptions.RequestException as e:
         logger.error(f"GIT API: Exceção ao atualizar ficheiro '{filepath}': {e}")
         return False
+/*******  d9e42a77-2f20-4a85-993a-3d4bd59a14ad  *******/
 
 
 # ============================================================================
