@@ -578,58 +578,37 @@ class ManualEditorHandler:
             return False
 
 
-    def save_manual_calendar(self) -> bool:
-        """Guarda manual_calendar.ics"""
-        try:
-            if not os.path.exists(MANUAL_CALENDAR_PATH):
-                raise FileNotFoundError(f"{MANUAL_CALENDAR_PATH} não encontrado")
+def save_manual_calendar(self) -> bool:
+    """Guarda manual_calendar.ics no disco local.
+    
+    ✅ CORRIGIDO v1.1: Modo binário correto (wb + bytes)
+    """
+    try:
+        # Criar calendário iCalendar
+        cal = Calendar()
+        cal.add('prodid', '-//Rental Manual Calendar//PT')
+        cal.add('version', '2.0')
+        cal.add('calscale', 'GREGORIAN')
+        cal.add('x-wr-calname', 'Manual Calendar')
+        cal.add('x-wr-timezone', 'Europe/Lisbon')
 
-            cal = Calendar()
-            cal.add('prodid', '-//Rental Manual Calendar//PT')
-            cal.add('version', '2.0')
-            cal.add('calscale', 'GREGORIAN')
-            cal.add('x-wr-calname', 'Manual Calendar')
-            cal.add('x-wr-timezone', 'Europe/Lisbon')
+        # Adicionar todos os eventos manuais
+        for event in self.manual_events:
+            cal.add_component(event)
 
-            for event in self.manual_events:
-                cal.add_component(event)
+        # ✅ CORREÇÃO CRÍTICA: to_ical() retorna bytes, escrever diretamente
+        ical_bytes = cal.to_ical()
 
-            ical_data = cal.to_ical().decode('utf-8')  # Codifica o conteúdo do ficheiro em UTF-8
+        # Escrever no disco em modo binário
+        with open(MANUAL_CALENDAR_PATH, 'wb') as f:
+            f.write(ical_bytes)
 
-            # Verifica se o ficheiro foi guardado corretamente
-            with open(MANUAL_CALENDAR_PATH, 'wb') as f:
-                cal = Calendar()
-                cal.add('prodid', '-//Rental Manual Calendar//PT')
-                cal.add('version', '2.0')
-                cal.add('calscale', 'GREGORIAN')
-                cal.add('x-wr-calname', 'Manual Calendar')
-                cal.add('x-wr-timezone', 'Europe/Lisbon')
+        logger.info(f'✅ Guardado {MANUAL_CALENDAR_PATH} com {len(self.manual_events)} eventos')
+        return True
 
-                for event in self.manual_events:
-                    cal.add_component(event)
-
-                f.write(cal.to_ical().decode('utf-8'))  # Codifica o conteúdo do ficheiro em UTF-8
-                ical_data = cal.to_ical().decode('utf-8')  # Codifica o conteúdo do ficheiro em UTF-8
-                f.write(ical_data)
-
-            # Verifica se o conteúdo do ficheiro é igual ao esperado
-            with open(MANUAL_CALENDAR_PATH, 'rb') as f:
-                file_data = f.read()
-            if file_data != ical_data:
-                raise ValueError(f"O conteúdo do ficheiro {MANUAL_CALENDAR_PATH} não é igual ao esperado")
-
-            logger.info(f'Guardado {MANUAL_CALENDAR_PATH} com {len(self.manual_events)} eventos')
-            return True
-
-        except FileNotFoundError:
-            logger.error(f"{MANUAL_CALENDAR_PATH} não encontrado")
-            return False
-        except ValueError as e:
-            logger.error(f"O conteúdo do ficheiro {MANUAL_CALENDAR_PATH} não é igual ao esperado: {e}")
-            return False
-        except Exception as e:
-            logger.error(f'Erro ao guardar manual_calendar.ics: {e}')
-            return False
+    except Exception as e:
+        logger.error(f'❌ Erro ao guardar manual_calendar.ics: {e}', exc_info=True)
+        return False
         
 
 if __name__ == '__main__':
