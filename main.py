@@ -171,8 +171,8 @@ def update_github_file(filepath: str, commit_message: str) -> bool:
     github_owner = os.getenv('GITHUB_OWNER')
     github_repo = os.getenv('GITHUB_REPO')
 
-    # O ficheiro é lido a partir do APP_ROOT_PATH, que no Render é /opt/render/project/src
-    local_file_path = APP_ROOT_PATH / filepath
+    # ✅ Correção v2.1: O ficheiro é lido a partir do REPO_PATH, que é a raiz do repositório.
+    local_file_path = REPO_PATH / filepath
     
     if not local_file_path.exists():
         logger.error(f"GIT API: Ficheiro local '{local_file_path}' não encontrado para upload.")
