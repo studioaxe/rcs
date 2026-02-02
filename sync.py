@@ -355,17 +355,27 @@ def deduplicate_events(events: List[Dict]) -> List[Dict]:
 # ============================================================================
 
 def load_manual_calendar() -> Optional[Calendar]:
-    """Load manual calendar."""
+    
     try:
+        # ✅ Tentar primeiro REPO_PATH (raiz do repositório)
         path = Path(MANUAL_CALENDAR_PATH)
+        
+        # ✅ Se não existir, tentar APP_ROOT_PATH (Render /src)
         if not path.exists():
-            log_info(f"Nenhum {MANUAL_CALENDAR_PATH} encontrado")
-            return None
+            app_root_path = REPO_DIR / "src" / "manual_calendar.ics"
+            if app_root_path.exists():
+                path = app_root_path
+                log_info(f"Manual calendar encontrado em APP_ROOT_PATH: {path}")
+            else:
+                log_info(f"Nenhum manual_calendar.ics encontrado em:")
+                log_info(f"  - {MANUAL_CALENDAR_PATH}")
+                log_info(f"  - {app_root_path}")
+                return None
         
         with path.open('rb') as f:
             cal = Calendar.from_ical(f.read())
         
-        log_info(f"Loaded {MANUAL_CALENDAR_PATH}")
+        log_success(f"✅ Loaded {path}")
         return cal
     except Exception as e:
         log_error(f"Erro ao carregar manual calendar: {e}")
