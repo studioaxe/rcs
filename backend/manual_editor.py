@@ -609,6 +609,7 @@ class ManualEditorHandler:
         except Exception as e:
             logger.error(f'Erro ao guardar manual_calendar.ics: {e}')
             return False
+        
 
 if __name__ == '__main__':
     logging.basicConfig(
