@@ -36,7 +36,7 @@ class Config:
 
     # Authentication
     ADMIN_USERNAME = os.getenv('ADMIN_USERNAME', 'admin')
-    ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD', 'admin123')
+    ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD')
 
     # Git
     GIT_USER_EMAIL = os.getenv('GIT_USER_EMAIL', 'rental-calendar-sync@pbrandao.pt')

@@ -27,8 +27,8 @@ except (ImportError, AttributeError) as e:
     # Fallback APENAS se config.py não existir
     print(f"⚠️  Warning: config.py não carregado ({e})")
     print("   Usando credenciais de fallback...")
-    ADMIN_USERNAME = "admin"
-    ADMIN_PASSWORD = "Juju2323!"
+    ADMIN_USERNAME = os.getenv("ADMIN_USERNAME")
+    ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
     USE_CONFIG = False
 
 # ============================================================================
