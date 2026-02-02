@@ -9,6 +9,7 @@ Data: 01 de fevereiro de 2026
 Desenvolvido por: PBrandão
 """
 
+import os
 import logging
 from datetime import datetime, date, timedelta
 from pathlib import Path
@@ -597,6 +598,17 @@ class ManualEditorHandler:
 
             # Verifica se o ficheiro foi guardado corretamente
             with open(MANUAL_CALENDAR_PATH, 'wb') as f:
+                cal = Calendar()
+                cal.add('prodid', '-//Rental Manual Calendar//PT')
+                cal.add('version', '2.0')
+                cal.add('calscale', 'GREGORIAN')
+                cal.add('x-wr-calname', 'Manual Calendar')
+                cal.add('x-wr-timezone', 'Europe/Lisbon')
+
+                for event in self.manual_events:
+                    cal.add_component(event)
+
+                ical_data = cal.to_ical().decode('utf-8')  # Codifica o conteúdo do ficheiro em UTF-8
                 f.write(ical_data)
 
             # Verifica se o conteúdo do ficheiro é igual ao esperado
@@ -608,6 +620,12 @@ class ManualEditorHandler:
             logger.info(f'Guardado {MANUAL_CALENDAR_PATH} com {len(self.manual_events)} eventos')
             return True
 
+        except FileNotFoundError:
+            logger.error(f"{MANUAL_CALENDAR_PATH} não encontrado")
+            return False
+        except ValueError as e:
+            logger.error(f"O conteúdo do ficheiro {MANUAL_CALENDAR_PATH} não é igual ao esperado: {e}")
+            return False
         except Exception as e:
             logger.error(f'Erro ao guardar manual_calendar.ics: {e}')
             return False

@@ -43,6 +43,11 @@ def find_repo_dir() -> Path:
 
     # 2. Fallback: Procurar '.git' a partir do diretório atual
     work_dir = Path.cwd()
+    while work_dir != Path(work_dir.root):
+        if (work_dir / '.git').exists():
+            return work_dir
+        work_dir = work_dir.parent
+
     if (work_dir / '.git').exists():
         return work_dir
     
