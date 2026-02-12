@@ -548,40 +548,22 @@ def api_calendar_nights():
     try:
         logger.info('API: GET /api/calendar/nights')
         
-        import_events = ICSHandler.read_ics_file('import_calendar.ics') or []
-        manual_events = ICSHandler.read_ics_file('manual_calendar.ics') or []
+        editor = ManualEditorHandler()
+        import_events = editor.load_import_events()
+        manual_events = editor.load_manual_events()
         
         logger.info(f'API: Carregados {len(import_events)} eventos (import) + {len(manual_events)} eventos (manual)')
         
-        import_nights = convert_events_to_nights(import_events)
-        manual_nights = convert_events_to_nights(manual_events)
-        final_nights = apply_night_overlay_rules(import_nights, manual_nights)
+        # Use a lógica de processamento de dados do ManualEditorHandler
+        final_nights = editor.process_calendar_data(import_events, manual_events)
         
-        logger.info(f'API: {len(final_nights)} noites finais')
+        logger.info(f'API: {len(final_nights)} noites finais processadas')
         
-        COLORMAP = {
-            'RESERVATION': 'ff0000',
-            'PREP-TIME': 'ffaa00',
-            'MANUAL-BLOCK': '00ff00',
-            'MANUAL-REMOVE': 'ffff00',
-            'AVAILABLE': '4dd9ff'
-        }
-        
-        nights_with_colors = {}
-        for night_date, night_data in final_nights.items():
-            category = night_data['category']
-            color = COLORMAP.get(category, '4dd9ff')
-            nights_with_colors[night_date] = {
-                'category': category,
-                'color': color,
-                'description': night_data.get('description', ''),
-                'uid': night_data.get('uid', '')
-            }
-        
+        # O retorno já tem a estrutura correta, incluindo 'uid' e 'description'
         return jsonify(
             success=True,
-            data=nights_with_colors,
-            count=len(nights_with_colors),
+            data=final_nights,
+            count=len(final_nights),
             timestamp=datetime.now().isoformat()
         ), 200
         
