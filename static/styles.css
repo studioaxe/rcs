@@ -175,6 +175,8 @@ body.dark-mode .calendar-container {
 .calendar-header {
     display: flex;
     align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
     gap: 1rem;
     margin-bottom: 1.5rem;
 }
@@ -188,6 +190,7 @@ body.dark-mode .calendar-container {
 
 .calendar-grid-wrapper {
     position: relative;
+    overflow-x: auto;
 }
 
 .calendar-grid {
@@ -195,6 +198,7 @@ body.dark-mode .calendar-container {
     grid-template-columns: repeat(7, 1fr);
     border: 1px solid var(--border-light);
     position: relative;
+    min-width: 600px; /* Adjust as needed */
 }
 
 body.dark-mode .calendar-grid {
@@ -534,20 +538,4 @@ input:checked + .slider:before {
 }
 
 /* RESPONSIVO */
-@media (max-width: 768px) {
-    .header {
-        flex-direction: column;
-        gap: 1rem;
-        padding: 1rem;
-    }
-    .main-container {
-        padding: 1rem;
-    }
-    .calendar-header {
-        flex-direction: column;
-        gap: 0.5rem;
-    }
-    .calendar-header__month-year {
-        font-size: 1.2rem;
-    }
-}
+
