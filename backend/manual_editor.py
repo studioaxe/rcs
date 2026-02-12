@@ -163,111 +163,87 @@ class ManualEditorHandler:
         calendar_data = {}
         try:
             today = date.today()
-            start_date = today
-            end_date = today + timedelta(days=90)
-            logger.info(f'Processando período {start_date} até {end_date} (90 dias)')
+            start_date = today - timedelta(days=365) # Look back one year
+            end_date = today + timedelta(days=365) # Look forward one year
+            logger.info(f'Processando período {start_date} até {end_date}')
 
-            # Inicializar calendário com datas disponíveis
+            # Inicializar calendário
             current = start_date
             while current <= end_date:
                 date_str = current.isoformat()
                 calendar_data[date_str] = {
-                    'category': 'available',
-                    'descriptions': [],
-                    'color': COLORMAP['available']
+                    'category': 'AVAILABLE',
+                    'description': 'Disponível',
+                    'uid': '',
+                    'color': COLORMAP.get('available', '#4dd9ff')
                 }
                 current += timedelta(days=1)
 
-            # Processar eventos de importação
-            for event in import_events:
+            # Unir e ordenar todos os eventos por data de início
+            all_events = sorted(import_events + manual_events, key=lambda x: x.get('dtstart') or '9999-12-31')
+
+            # Mapeamento de regras de sobreposição
+            # RESERVATION sobrepõe tudo
+            # PREP-TIME só sobrepõe AVAILABLE
+            # MANUAL-BLOCK sobrepõe tudo
+            # MANUAL-REMOVE "limpa" para AVAILABLE
+            overlay_priority = {
+                'RESERVATION': 3,
+                'MANUAL-BLOCK': 3,
+                'PREP-TIME': 2,
+                'MANUAL-REMOVE': 1,
+                'AVAILABLE': 0
+            }
+
+            for event in all_events:
                 try:
                     dtstart_str = event.get('dtstart')
                     dtend_str = event.get('dtend')
-                    categories = event.get('categories', '').upper()
+                    category = event.get('categories', '').upper().strip()
                     summary = event.get('summary', 'Evento')
+                    uid = event.get('uid', '')
 
-                    if not dtstart_str:
+                    if not dtstart_str or not dtend_str:
                         continue
 
-                    # Parse data de início
-                    if 'T' in dtstart_str:
-                        dtstart_date = datetime.fromisoformat(dtstart_str.split('T')[0]).date()
-                    else:
-                        dtstart_date = datetime.fromisoformat(dtstart_str).date()
-
-                    # Parse data de fim
-                    if dtend_str:
-                        if 'T' in dtend_str:
-                            dtend_date = datetime.fromisoformat(dtend_str.split('T')[0]).date()
-                        else:
-                            dtend_date = datetime.fromisoformat(dtend_str).date()
-                    else:
-                        dtend_date = dtstart_date
-
-                    # Aplicar categoria a todos os dias do evento
+                    dtstart_date = datetime.fromisoformat(dtstart_str.split('T')[0]).date()
+                    dtend_date = datetime.fromisoformat(dtend_str.split('T')[0]).date()
+                    
                     current = dtstart_date
                     while current < dtend_date:
                         date_str = current.isoformat()
                         if date_str in calendar_data:
-                            if 'RESERVATION' in categories:
-                                calendar_data[date_str]['category'] = 'reserved'
-                                calendar_data[date_str]['color'] = COLORMAP['reserved']
-                            elif 'PREP-TIME' in categories:
-                                if calendar_data[date_str]['category'] == 'available':
-                                    calendar_data[date_str]['category'] = 'prep-time'
-                                    calendar_data[date_str]['color'] = COLORMAP['prep-time']
+                            # Lógica de sobreposição
+                            current_category = calendar_data[date_str]['category']
+                            
+                            if 'MANUAL-REMOVE' in category:
+                                calendar_data[date_str]['category'] = 'AVAILABLE'
+                                calendar_data[date_str]['description'] = 'Disponível'
+                                calendar_data[date_str]['uid'] = ''
+                                calendar_data[date_str]['color'] = COLORMAP.get('available')
+                            
+                            elif 'RESERVATION' in category:
+                                calendar_data[date_str]['category'] = 'RESERVATION'
+                                calendar_data[date_str]['description'] = summary
+                                calendar_data[date_str]['uid'] = uid
+                                calendar_data[date_str]['color'] = COLORMAP.get('reserved')
 
-                            if summary not in calendar_data[date_str]['descriptions']:
-                                calendar_data[date_str]['descriptions'].append(summary)
+                            elif 'MANUAL-BLOCK' in category:
+                                calendar_data[date_str]['category'] = 'MANUAL-BLOCK'
+                                calendar_data[date_str]['description'] = summary
+                                calendar_data[date_str]['uid'] = uid
+                                calendar_data[date_str]['color'] = COLORMAP.get('manual-block')
 
-                        current += timedelta(days=1)
-
-                except Exception as e:
-                    logger.warning(f'Erro ao processar evento de importação: {e}')
-                    continue
-
-            # Processar eventos manuais
-            for event in manual_events:
-                try:
-                    dtstart_str = event.get('dtstart')
-                    dtend_str = event.get('dtend')
-                    categories = event.get('categories', '').upper()
-                    summary = event.get('summary', 'Evento Manual')
-
-                    if not dtstart_str:
-                        continue
-
-                    # Parse data de início
-                    if 'T' in dtstart_str:
-                        dtstart_date = datetime.fromisoformat(dtstart_str.split('T')[0]).date()
-                    else:
-                        dtstart_date = datetime.fromisoformat(dtstart_str).date()
-
-                    # Parse data de fim
-                    if dtend_str:
-                        if 'T' in dtend_str:
-                            dtend_date = datetime.fromisoformat(dtend_str.split('T')[0]).date()
-                        else:
-                            dtend_date = datetime.fromisoformat(dtend_str).date()
-                    else:
-                        dtend_date = dtstart_date
-
-                    # Aplicar manualmente - sobrepõe import
-                    current = dtstart_date
-                    while current < dtend_date:
-                        date_str = current.isoformat()
-                        if date_str in calendar_data:
-                            if 'MANUAL-BLOCK' in categories:
-                                calendar_data[date_str]['category'] = 'manual-block'
-                                calendar_data[date_str]['color'] = COLORMAP['manual-block']
-                            elif 'MANUAL-REMOVE' in categories:
-                                calendar_data[date_str]['category'] = 'manual-remove'
-                                calendar_data[date_str]['color'] = COLORMAP['manual-remove']
+                            elif 'PREP-TIME' in category and calendar_data[date_str]['category'] == 'AVAILABLE':
+                                calendar_data[date_str]['category'] = 'PREP-TIME'
+                                calendar_data[date_str]['description'] = summary
+                                calendar_data[date_str]['uid'] = uid
+                                calendar_data[date_str]['color'] = COLORMAP.get('prep-time')
 
                         current += timedelta(days=1)
 
                 except Exception as e:
-                    logger.warning(f'Erro ao processar evento manual: {e}')
+                    logger.warning(f"Erro ao processar evento: {summary} - {e}")
                     continue
 
             logger.info(f'Processados {len(calendar_data)} dias')
