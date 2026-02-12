@@ -347,6 +347,10 @@ def api_sync_manual():
         logger.info(f"API: Sincronização MANUAL iniciada por utilizador: {user} | Notificar: {should_notify}")
         logger.info('='*80)
         
+        # ✅ CORREÇÃO CRÍTICA: Descarregar sempre o manual_calendar.ics mais recente do Git
+        logger.info("API: A descarregar 'manual_calendar.ics' do GitHub para garantir que está atualizado...")
+        download_github_file('manual_calendar.ics')
+        
         # Forçar download para garantir que os calendários externos estão atualizados
         success = sync_calendars(force_download=True)
         
@@ -544,22 +548,33 @@ def api_calendar_save():
 @app.route('/api/calendar/nights', methods=['GET'])
 @api_login_required
 def api_calendar_nights():
-    """GET /api/calendar/nights - NOITES consolidadas"""
+    """GET /api/calendar/nights - NOITES consolidadas a partir do master_calendar.ics"""
     try:
-        logger.info('API: GET /api/calendar/nights')
+        logger.info('API: GET /api/calendar/nights a partir do master_calendar.ics')
+
+        # O master_calendar.ics é a fonte de verdade final
+        master_events = ICSHandler.read_ics_file('master_calendar.ics') or []
         
-        editor = ManualEditorHandler()
-        import_events = editor.load_import_events()
-        manual_events = editor.load_manual_events()
+        logger.info(f'API: Carregados {len(master_events)} eventos do master_calendar.ics')
         
-        logger.info(f'API: Carregados {len(import_events)} eventos (import) + {len(manual_events)} eventos (manual)')
+        # Gerar um mapa de noites inicial com todos os dias como disponíveis
+        final_nights: Dict[str, Dict[str, Any]] = {}
+        today = date.today()
+        start_date = today - timedelta(days=365)
+        end_date = today + timedelta(days=730) # 2 anos para o futuro
+        current = start_date
+        while current <= end_date:
+            final_nights[current.isoformat()] = {'category': 'AVAILABLE', 'description': 'Disponível', 'uid': ''}
+            current += timedelta(days=1)
+
+        # Converter eventos do master para o formato de noites e sobrepor
+        master_nights = convert_events_to_nights(master_events)
         
-        # Use a lógica de processamento de dados do ManualEditorHandler
-        final_nights = editor.process_calendar_data(import_events, manual_events)
+        # Sobrepor os dias disponíveis com os eventos do master
+        final_nights.update(master_nights)
+
+        logger.info(f'API: {len(final_nights)} noites finais para enviar ao frontend')
         
-        logger.info(f'API: {len(final_nights)} noites finais processadas')
-        
-        # O retorno já tem a estrutura correta, incluindo 'uid' e 'description'
         return jsonify(
             success=True,
             data=final_nights,
@@ -568,7 +583,7 @@ def api_calendar_nights():
         ), 200
         
     except Exception as e:
-        logger.error(f'API: Erro ao converter noites: {e}', exc_info=True)
+        logger.error(f'API: Erro ao converter noites do master_calendar: {e}', exc_info=True)
         return jsonify(
             success=False,
             error=str(e),
