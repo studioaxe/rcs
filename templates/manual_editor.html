@@ -222,7 +222,7 @@
             display: flex;
             align-items: flex-start;
             justify-content: flex-start;
-            padding: 4px;
+            padding: 8px 4px 4px 4px;
             font-size: 0.8rem;
             border-right: 1px solid #eee;
             border-bottom: 1px solid #eee;
@@ -432,6 +432,7 @@
         .calendar-cell {
             aspect-ratio: 1.2; /* More space for events */
             font-size: 0.7rem;
+            padding: 6px 4px 4px 4px;
         }
         .event-bar {
             height: 18px;
@@ -664,16 +665,21 @@
 
                 <!-- Card: Legenda -->
                 <div class="card">
-                    <div class="legend-item">
-                        <div class="legend-color" style="background: var(--color-reserved);"></div><span>Reserva Nativa</span>
-                        <div class="tab-spacer" style="width: 60px;"></div>
-                        <div class="legend-color" style="background: var(--color-manual-block);"></div><span>Reserva Manual</span>
-                        <div class="tab-spacer" style="width: 60px;"></div>                   
-                        <div class="legend-color" style="background: var(--color-prep-time);"></div><span>TP - Tempo de Preparação</span>
-                        <div class="tab-spacer" style="width: 60px;"></div>
-                        <div class="legend-color" style="background: var(--color-manual-remove);"></div><span>TP Removido</span>
+                    <div class="legend">
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: var(--color-reserved);"></div><span>Reserva Nativa</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: var(--color-manual-block);"></div><span>Reserva Manual</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: var(--color-prep-time);"></div><span>TP - Tempo de Preparação</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: var(--color-manual-remove);"></div><span>TP Removido</span>
+                        </div>
                     </div>
-                    <div class="line-separator" style="height: 1px; background: #eee; margin: 10px 0;"></div>   
+                    <div class="line-separator" style="height: 1px; background: #eee; margin: 10px 0;"></div>
                     <div class="legend-item">
                         <span>Para selecionar intervalo de datas = Shift + Click</span>
                     </div>
@@ -896,7 +902,7 @@
                     if (event.end === prevDateStr) {
                         const firstCell = dayCells.find(c => c.dataset.date === firstVisibleDateStr);
                         if (firstCell) {
-                            const barYPosition = (firstCell.offsetHeight / 2) - 11; // Center the 22px bar
+                            const barYPosition = firstCell.offsetHeight - 25; // Position bar at the bottom
                             const hangoverBar = document.createElement('div');
                             hangoverBar.className = `event-bar ${CATEGORYCLASS[event.category] || ''}`;
                             hangoverBar.style.left = `${firstCell.offsetLeft}px`;
@@ -939,7 +945,7 @@
                 if (cellsInView.length === 0) continue;
 
                 const firstCell = cellsInView[0];
-                const barYPosition = (firstCell.offsetHeight / 2) - 11; // Center the 22px bar
+                const barYPosition = firstCell.offsetHeight - 25; // Position bar at the bottom
 
                 // Group cells by visual row
                 const lineGroups = [];
