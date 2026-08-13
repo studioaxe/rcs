@@ -9,7 +9,7 @@ on:
         default: 'manual-editor'
         type: string
       timestamp:
-        description: 'Timestamp da requisição'
+        description: 'Timestamp da requisicao'
         required: false
         type: string
 
@@ -27,7 +27,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
@@ -99,7 +99,7 @@ jobs:
             echo ""
             echo "=== Fazendo push ==="
             if git push origin main; then
-              echo "[SUCCESS] Push realizado com sucesso"
+              echo "[SUCCESS] Push realizado com sucesso (aciona Publish Master Calendar)"
             else
               echo "[ERROR] Push falhou"
               exit 1
@@ -114,7 +114,3 @@ jobs:
           echo "===================================="
           echo ""
           echo "[SUCCESS] Sincronizacao manual concluida!"
-          echo "Ficheiros atualizados:"
-          echo " - import_calendar.ics"
-          echo " - master_calendar.ics"
-          echo " - manual_calendar.ics (se aplicavel)"
