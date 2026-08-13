@@ -4,7 +4,10 @@
 """
 main.py - Rental Calendar Sync - Flask API
 
-Versão: 1.6 (Rota publica /master_calendar.ics sem cache)
+Versão: 1.7
+Arquitetura: GitHub Actions gera e publica o master_calendar.ics via GitHub Pages.
+O Render serve apenas o editor manual e a API de apoio (não expõe mais o ICS
+como fonte pública, pois o plano Free tem downtime/spin-down).
 Data: 13 de agosto de 2026
 Desenvolvido por: PBrandão
 """
@@ -26,23 +29,19 @@ from backend.notifier import EmailNotifier
 from backend.ics import ICSHandler
 from backend.manual_editor import ManualEditorHandler
 
-# v2.1: Lógica de Deteção de Caminho para Aplicação (Render vs. Local)
+# Lógica de Deteção de Caminho para Aplicação (Render vs. Local)
 REPO_PATH = Path(REPO_DIR)
 APP_ROOT_PATH = REPO_PATH
 
-# No ambiente Render, o código-fonte fica dentro de um subdiretório 'src'
 if os.getenv('RENDER') == 'true':
     APP_ROOT_PATH = REPO_PATH / "src"
 
-# Caminhos para Flask, baseados na raiz da aplicação
 STATIC_PATH = APP_ROOT_PATH / "static"
 TEMPLATES_PATH = APP_ROOT_PATH / "templates"
 
-# Certificar que as pastas existem
 STATIC_PATH.mkdir(exist_ok=True)
 TEMPLATES_PATH.mkdir(exist_ok=True)
 
-# Configuração de logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -52,10 +51,9 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
-logger.info(f"REPO_PATH (para Git/Disco): {REPO_PATH}")
-logger.info(f"APP_ROOT_PATH (para Flask): {APP_ROOT_PATH}")
+logger.info(f"REPO_PATH: {REPO_PATH}")
+logger.info(f"APP_ROOT_PATH: {APP_ROOT_PATH}")
 
-# Inicialização da App Flask
 app = Flask(__name__, static_folder=str(STATIC_PATH), template_folder=str(TEMPLATES_PATH))
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key-change-in-prod')
 app.config['SESSION_COOKIE_SECURE'] = os.getenv('FLASK_SESSION_SECURE', 'False').lower() == 'true'
@@ -103,29 +101,37 @@ def logout_page():
     return redirect(url_for('login_page'))
 
 # ============================================================================
-# ✅ NOVO: ROTA PÚBLICA DO MASTER CALENDAR (ICS)
+# ROTA DE APOIO (FALLBACK LOCAL) - NÃO É A FONTE OFICIAL DO ICS
 # ============================================================================
 
 @app.route('/master_calendar.ics', methods=['GET'])
-def serve_master_calendar():
-    """Serve o master_calendar.ics diretamente do disco persistente (REPO_DIR),
-    sempre sem cache, para refletir a sincronização mais recente
-    (manual ou automática via GitHub Actions).
-
-    URL final esperado: https://<nome-do-servico>.onrender.com/master_calendar.ics
+def serve_master_calendar_fallback():
     """
-    file_path = Path(REPO_DIR) / "master_calendar.ics"
+    Fallback local do master_calendar.ics, útil apenas para debug/dev.
+
+    ATENÇÃO: A fonte oficial para Airbnb/Booking/Vrbo passa a ser o GitHub
+    Pages (URL fixo, sempre disponível, sem spin-down):
+
+        https://studioaxe.github.io/rcs/master_calendar.ics
+
+    Este endpoint no Render pode devolver 404 após reinícios/spin-down do
+    plano Free, por isso NÃO deve ser configurado nas plataformas de reserva.
+    """
+    file_path = REPO_PATH / "master_calendar.ics"
 
     if not file_path.exists():
-        logger.warning(f"master_calendar.ics não encontrado em {file_path}")
-        return jsonify(error="master_calendar.ics não encontrado"), 404
+        return jsonify(
+            error="master_calendar.ics não disponível localmente neste momento",
+            official_url="https://studioaxe.github.io/rcs/master_calendar.ics"
+        ), 404
 
     response = send_file(
         file_path,
-        mimetype='text/calendar',
+        mimetype="text/calendar; charset=utf-8",
         as_attachment=False,
-        download_name='master_calendar.ics',
-        max_age=0
+        download_name="master_calendar.ics",
+        conditional=False,
+        max_age=0,
     )
     response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     response.headers['Pragma'] = 'no-cache'
@@ -188,6 +194,9 @@ def download_github_file(filepath: str) -> bool:
     """Descarrega ficheiro do GitHub para disco local.
 
     Garante que manual_calendar.ics existe localmente antes do sync.
+
+    CORRIGIDO: grava sempre relativo a REPO_PATH, evitando duplicar
+    subpastas 'src' quando o Render usa /opt/render/project/src.
     """
     github_token = os.getenv('GITHUB_TOKEN')
     github_owner = os.getenv('GITHUB_OWNER')
@@ -204,9 +213,8 @@ def download_github_file(filepath: str) -> bool:
             content_base64 = response.json()['content']
             content_bytes = base64.b64decode(content_base64)
 
-            local_file_path = APP_ROOT_PATH / filepath
-            if not local_file_path.parent.exists():
-                local_file_path = REPO_PATH / filepath
+            local_file_path = REPO_PATH / filepath
+            local_file_path.parent.mkdir(parents=True, exist_ok=True)
 
             with open(local_file_path, 'wb') as f:
                 f.write(content_bytes)
@@ -279,6 +287,47 @@ def update_github_file(filepath: str, commit_message: str) -> bool:
         logger.error(f"GIT API: Exceção ao atualizar ficheiro '{filepath}': {e}")
         return False
 
+def trigger_github_workflow(workflow_filename: str, inputs: Optional[Dict[str, str]] = None) -> bool:
+    """
+    ✅ NOVO: Dispara um workflow do GitHub Actions via workflow_dispatch.
+
+    Usado para pedir ao GitHub Actions que corra a sincronização completa
+    (sync.py) e publique o master_calendar.ics atualizado no GitHub Pages,
+    em vez de depender do filesystem efémero do Render.
+    """
+    github_token = os.getenv('GITHUB_TOKEN')
+    github_owner = os.getenv('GITHUB_OWNER')
+    github_repo = os.getenv('GITHUB_REPO')
+    github_branch = os.getenv('GITHUB_BRANCH', 'main')
+
+    api_url = (
+        f"https://api.github.com/repos/{github_owner}/{github_repo}"
+        f"/actions/workflows/{workflow_filename}/dispatches"
+    )
+    headers = {
+        'Authorization': f'token {github_token}',
+        'Accept': 'application/vnd.github.v3+json'
+    }
+    payload = {
+        'ref': github_branch,
+        'inputs': inputs or {}
+    }
+
+    try:
+        response = requests.post(api_url, headers=headers, json=payload, timeout=15)
+        if response.status_code == 204:
+            logger.info(f"GIT API: Workflow '{workflow_filename}' disparado com sucesso.")
+            return True
+        else:
+            logger.error(
+                f"GIT API: Erro ao disparar workflow '{workflow_filename}'. "
+                f"Status: {response.status_code}, Resposta: {response.text}"
+            )
+            return False
+    except requests.exceptions.RequestException as e:
+        logger.error(f"GIT API: Exceção ao disparar workflow '{workflow_filename}': {e}")
+        return False
+
 # ============================================================================
 # API - SESSION
 # ============================================================================
@@ -291,7 +340,6 @@ def api_session():
 
 from functools import wraps
 
-# Chave de API para proteger endpoints de automação
 API_SECRET_KEY = os.getenv('API_SECRET_KEY')
 
 def api_key_required(f):
@@ -317,34 +365,35 @@ def api_key_required(f):
 @app.route('/api/sync', methods=['POST'])
 @api_key_required
 def api_sync():
-    """Força sincronização imediata, usado pela automação do GitHub."""
+    """
+    Força sincronização imediata.
+
+    ✅ ALTERADO: em vez de sincronizar localmente no Render (filesystem
+    efémero), dispara o workflow 'full_auto_workflow.yml' no GitHub Actions,
+    que corre sync.py, faz commit e aciona a publicação no GitHub Pages.
+    """
     try:
-        force_download = request.args.get('force', 'true').lower() == 'true'
         source = request.args.get('source', 'desconhecida')
 
         logger.info('='*80)
-        logger.info(f"API: Sincronização iniciada (via API Key) - Fonte: {source}")
+        logger.info(f"API: Disparando sincronizacao via GitHub Actions - Fonte: {source}")
         logger.info('='*80)
 
-        success = sync_calendars(force_download=force_download)
+        triggered = trigger_github_workflow(
+            'full_auto_workflow.yml',
+            inputs={'triggered_by': source}
+        )
 
-        if success:
-            logger.info("API: Sincronização local concluída. Atualizando GitHub...")
-            update_github_file('import_calendar.ics', f'Auto-sync: import_calendar.ics (Fonte: {source})')
-            update_github_file('master_calendar.ics', f'Auto-sync: master_calendar.ics (Fonte: {source})')
-
+        if triggered:
             return jsonify(
                 status='success',
-                message='Sincronização completada e ficheiros atualizados no GitHub e Render.',
+                message='Sincronização disparada no GitHub Actions. O master_calendar.ics será publicado no GitHub Pages em breve.',
                 timestamp=datetime.now().isoformat()
             ), 200
         else:
-            logger.error('='*80)
-            logger.error('API: Sincronização falhou')
-            logger.error('='*80)
             return jsonify(
                 status='error',
-                message='Erro na sincronização',
+                message='Falha ao disparar o workflow de sincronização no GitHub.',
                 timestamp=datetime.now().isoformat()
             ), 500
 
@@ -362,41 +411,35 @@ def api_sync():
 @app.route('/api/sync-manual', methods=['POST'])
 @api_login_required
 def api_sync_manual():
-    """Força sincronização imediata a partir da UI (requer login)."""
+    """
+    Força sincronização imediata a partir da UI (requer login).
+
+    ✅ ALTERADO: dispara 'manual_sync_workflow.yml' no GitHub Actions,
+    garantindo que a publicação no GitHub Pages acontece mesmo que o
+    Render esteja em spin-down.
+    """
     try:
         user = AuthManager.get_current_user()
-        should_notify = request.args.get('notify', 'true').lower() == 'true'
 
         logger.info('='*80)
-        logger.info(f"API: Sincronização MANUAL iniciada por utilizador: {user} | Notificar: {should_notify}")
+        logger.info(f"API: Sincronização MANUAL solicitada por: {user}")
         logger.info('='*80)
 
-        logger.info("API: A descarregar 'manual_calendar.ics' do GitHub para garantir que está atualizado...")
-        download_github_file('manual_calendar.ics')
+        triggered = trigger_github_workflow(
+            'manual_sync_workflow.yml',
+            inputs={'triggered_by': user or 'manual-editor'}
+        )
 
-        success = sync_calendars(force_download=True)
-
-        if success:
-            logger.info("API: Sincronização manual concluída. Atualizando GitHub...")
-            update_github_file('import_calendar.ics', f'Manual sync: import_calendar.ics (User: {user})')
-            update_github_file('master_calendar.ics', f'Manual sync: master_calendar.ics (User: {user})')
-
-            if should_notify:
-                logger.info("Enviando notificação de sucesso...")
-                notifier.send_success(total_events=0, reserved_count=0)
-
+        if triggered:
             return jsonify(
                 status='success',
-                message='Sincronização completada e ficheiros atualizados no GitHub e Render.',
+                message='Sincronização manual disparada no GitHub Actions.',
                 timestamp=datetime.now().isoformat()
             ), 200
         else:
-            logger.error('='*80)
-            logger.error('API: Sincronização manual falhou')
-            logger.error('='*80)
             return jsonify(
                 status='error',
-                message='Erro na sincronização',
+                message='Falha ao disparar o workflow de sincronização manual.',
                 timestamp=datetime.now().isoformat()
             ), 500
 
@@ -418,27 +461,19 @@ def api_sync_manual():
 @app.route('/api/calendar/import', methods=['GET'])
 @api_login_required
 def api_calendar_import():
-    """GET /api/calendar/import - FLUXO CRÍTICO COMPLETO
-
-    Descarrega manual_calendar.ics do GitHub antes do sync
-    """
+    """GET /api/calendar/import - Executa sync local no Render apenas para
+    alimentar o editor (não é a fonte pública do ICS)."""
     try:
         logger.info('='*80)
         logger.info('API: GET /api/calendar/import')
-        logger.info('API: EXECUTANDO SYNC.PY + GIT (CRÍTICO)...')
         logger.info('='*80)
 
-        logger.info('API: Descarregando manual_calendar.ics do GitHub...')
         download_github_file('manual_calendar.ics')
 
-        logger.info('API: Iniciando sync_calendars()...')
         sync_start = datetime.now()
-
         try:
             sync_success = sync_calendars(force_download=True)
-            sync_end = datetime.now()
-            sync_duration = (sync_end - sync_start).total_seconds()
-
+            sync_duration = (datetime.now() - sync_start).total_seconds()
             if sync_success:
                 logger.info(f'API: Sync.py concluído com SUCESSO ({sync_duration:.2f}s)')
             else:
@@ -446,10 +481,6 @@ def api_calendar_import():
         except Exception as sync_error:
             logger.error(f'API: Erro durante sync.py: {sync_error}', exc_info=True)
             logger.warning('API: Continuando mesmo com erro...')
-
-        logger.info('API: Sincronização local concluída. Atualizando GitHub...')
-        update_github_file('import_calendar.ics', 'Calendar import: import_calendar.ics')
-        update_github_file('master_calendar.ics', 'Calendar import: master_calendar.ics')
 
         logger.info('API: Carregando import_calendar.ics ATUALIZADO...')
         editor = ManualEditorHandler()
@@ -483,7 +514,13 @@ def api_calendar_manual():
 @app.route('/api/calendar/save', methods=['POST'])
 @api_login_required
 def api_calendar_save():
-    """POST /api/calendar/save - Grava alterações em manual_calendar.ics"""
+    """
+    POST /api/calendar/save - Grava alterações em manual_calendar.ics.
+
+    ✅ ALTERADO: após guardar e fazer commit do manual_calendar.ics, dispara
+    o workflow 'manual_sync_workflow.yml' no GitHub Actions para gerar e
+    publicar o master_calendar.ics atualizado no GitHub Pages.
+    """
     try:
         data = request.get_json()
         added = data.get('added', [])
@@ -531,24 +568,21 @@ def api_calendar_save():
         user = AuthManager.get_current_user() or 'unknown'
         git_success_manual = update_github_file('manual_calendar.ics', f'Editor manual: {user}')
 
-        logger.info("API: Re-sincronizar para atualizar master_calendar.ics...")
-        sync_success = sync_calendars(force_download=False)
-
-        if not sync_success:
-            logger.error('API: Erro ao re-sincronizar calendários após guardar alterações manuais.')
-
-        logger.info("API: Sincronização local concluída. Atualizando master no GitHub...")
-        git_success_master = update_github_file('master_calendar.ics', f'Update master por editor manual (User: {user})')
+        logger.info("API: Disparando workflow de sincronização no GitHub Actions...")
+        workflow_triggered = trigger_github_workflow(
+            'manual_sync_workflow.yml',
+            inputs={'triggered_by': user}
+        )
 
         logger.info('='*80)
 
         return jsonify(
             success=True,
-            message='Alterações guardadas e calendários sincronizados com sucesso no GitHub e Render.',
+            message='Alterações guardadas. A sincronização e publicação do master_calendar.ics foi disparada no GitHub Actions.',
             events_added=len(added),
             events_removed=len(removed),
-            git_synced=git_success_manual and git_success_master,
-            sync_success=sync_success,
+            git_synced=git_success_manual,
+            workflow_triggered=workflow_triggered,
             timestamp=datetime.now().isoformat()
         ), 200
 
@@ -711,17 +745,19 @@ def server_error(error):
 
 if __name__ == '__main__':
     logger.info('='*80)
-    logger.info('Iniciando Rental Calendar Sync API v1.6')
+    logger.info('Iniciando Rental Calendar Sync API v1.7')
     logger.info('='*80)
     logger.info(f'REPO_PATH: {REPO_PATH}')
     logger.info(f'STATIC_PATH: {STATIC_PATH}')
     logger.info(f'TEMPLATES_PATH: {TEMPLATES_PATH}')
     logger.info('='*80)
     logger.info('ENDPOINTS DISPONÍVEIS:')
-    logger.info(' GET  /master_calendar.ics  - ICS público, sempre atualizado (sem cache)')
-    logger.info(' GET  /api/calendar/import  - Executa SYNC + Git push')
+    logger.info(' GET  /master_calendar.ics  - Fallback local (NAO usar em Booking/Airbnb/Vrbo)')
+    logger.info(' POST /api/sync             - Dispara full_auto_workflow.yml no GitHub Actions')
+    logger.info(' POST /api/sync-manual      - Dispara manual_sync_workflow.yml no GitHub Actions')
+    logger.info(' GET  /api/calendar/import  - Sync local (apenas para o editor)')
     logger.info(' GET  /api/calendar/manual  - Carrega manual_calendar.ics')
-    logger.info(' POST /api/calendar/save    - Grava alterações + git push')
+    logger.info(' POST /api/calendar/save    - Grava alterações + dispara workflow')
     logger.info(' GET  /api/calendar/nights  - Retorna NOITES consolidadas')
     logger.info(' GET  /api/events           - Eventos para barras visuais')
     logger.info('='*80)
