@@ -1,46 +1,69 @@
-name: Rental Calendar Sync - Full Auto (6h)
+name: Rental Calendar Sync - Full Auto
 
 on:
   schedule:
-    # Executa a cada 6 horas (0:00, 6:00, 12:00, 18:00 UTC)
-    - cron: '0 0,6,12,18 * * *'
+    - cron: "0 0,6,12,18 * * *"
   workflow_dispatch:
     inputs:
       triggered_by:
-        description: 'Usuario que disparou a sincronizacao'
+        description: 'Origem do disparo'
         required: false
         default: 'auto'
         type: string
-      timestamp:
-        description: 'Timestamp da requisicao'
-        required: false
-        default: ''
-        type: string
 
-# 🔑 PERMISSÕES - FIX PARA ERRO 403
 permissions:
   contents: write
 
+concurrency:
+  group: calendar-sync
+  cancel-in-progress: false
+
 jobs:
-  trigger-sync:
+  sync:
     runs-on: ubuntu-latest
-    name: Trigger Remote Sync via API
+    timeout-minutes: 10
+
     steps:
-      - name: 🚀 Trigger sync on Render
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
         run: |
-          response=$(curl -s -w "%{http_code}" -X POST \
-            -H "X-API-Key: ${{ secrets.API_SECRET_KEY }}" \
-            "${{ secrets.RENDER_APP_URL }}/api/sync?source=github-action-scheduled")
-          
-          http_code=$(tail -n1 <<< "$response")
-          body=$(head -n -1 <<< "$response")
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-          echo "API Response Code: $http_code"
-          echo "API Response Body: $body"
+      - name: Synchronize calendars (Airbnb + Booking + Vrbo)
+        env:
+          AIRBNB_ICAL_URL: ${{ secrets.AIRBNB_ICAL_URL }}
+          BOOKING_ICAL_URL: ${{ secrets.BOOKING_ICAL_URL }}
+          VRBO_ICAL_URL: ${{ secrets.VRBO_ICAL_URL }}
+          BUFFER_DAYS_BEFORE: ${{ secrets.BUFFER_DAYS_BEFORE }}
+          BUFFER_DAYS_AFTER: ${{ secrets.BUFFER_DAYS_AFTER }}
+        run: python sync.py
 
-          if [ "$http_code" -ne 200 ]; then
-            echo "::error::A sincronização remota falhou com o código de status $http_code"
-            exit 1
+      - name: Verify generated files
+        run: |
+          echo "=== import_calendar.ics ==="
+          [ -f import_calendar.ics ] && wc -l import_calendar.ics || echo "NAO ENCONTRADO"
+          echo "=== master_calendar.ics ==="
+          [ -f master_calendar.ics ] && wc -l master_calendar.ics || echo "NAO ENCONTRADO"
+
+      - name: Commit and push updated calendars
+        run: |
+          git config user.name "Rental Calendar Sync Bot"
+          git config user.email "noreply@github.com"
+          git add import_calendar.ics master_calendar.ics
+          if git diff --cached --quiet; then
+            echo "Sem alteracoes de calendario para commit."
+          else
+            git commit -m "Auto-sync calendars ($(date -u +'%Y-%m-%d %H:%M:%S UTC'))"
+            git push origin main
+            echo "Push efetuado - isto aciona o workflow Publish Master Calendar."
           fi
-          
-          echo "✅ Sincronização remota acionada com sucesso."
