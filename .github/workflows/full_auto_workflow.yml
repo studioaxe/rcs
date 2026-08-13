@@ -6,22 +6,28 @@ on:
   workflow_dispatch:
     inputs:
       triggered_by:
-        description: 'Origem do disparo'
+        description: "Origem do disparo"
         required: false
-        default: 'auto'
+        default: "auto"
         type: string
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 concurrency:
   group: calendar-sync
   cancel-in-progress: false
 
 jobs:
-  sync:
+  sync-and-publish:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
       - name: Checkout repository
@@ -39,7 +45,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Synchronize calendars (Airbnb + Booking + Vrbo)
+      - name: Synchronize calendars
         env:
           AIRBNB_ICAL_URL: ${{ secrets.AIRBNB_ICAL_URL }}
           BOOKING_ICAL_URL: ${{ secrets.BOOKING_ICAL_URL }}
@@ -48,22 +54,52 @@ jobs:
           BUFFER_DAYS_AFTER: ${{ secrets.BUFFER_DAYS_AFTER }}
         run: python sync.py
 
-      - name: Verify generated files
-        run: |
-          echo "=== import_calendar.ics ==="
-          [ -f import_calendar.ics ] && wc -l import_calendar.ics || echo "NAO ENCONTRADO"
-          echo "=== master_calendar.ics ==="
-          [ -f master_calendar.ics ] && wc -l master_calendar.ics || echo "NAO ENCONTRADO"
-
-      - name: Commit and push updated calendars
+      - name: Commit updated calendars
         run: |
           git config user.name "Rental Calendar Sync Bot"
           git config user.email "noreply@github.com"
+
           git add import_calendar.ics master_calendar.ics
+
           if git diff --cached --quiet; then
-            echo "Sem alteracoes de calendario para commit."
+            echo "Sem alterações de calendário para commit."
           else
             git commit -m "Auto-sync calendars ($(date -u +'%Y-%m-%d %H:%M:%S UTC'))"
             git push origin main
-            echo "Push efetuado - isto aciona o workflow Publish Master Calendar."
+            echo "Calendários atualizados no repositório."
           fi
+
+      - name: Prepare GitHub Pages site
+        run: |
+          mkdir -p public
+
+          cp master_calendar.ics public/master_calendar.ics
+
+          cat > public/index.html <<'EOF'
+          <!doctype html>
+          <html lang="pt-PT">
+            <head>
+              <meta charset="utf-8">
+              <title>Rental Calendar Sync</title>
+            </head>
+            <body>
+              <p>
+                <a href="master_calendar.ics">
+                  master_calendar.ics
+                </a>
+              </p>
+            </body>
+          </html>
+          EOF
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: Deploy master calendar to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
