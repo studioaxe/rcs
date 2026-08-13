@@ -4,8 +4,8 @@
 """
 main.py - Rental Calendar Sync - Flask API
 
-Versão: 1.0 Final
-Data: 02 de fevereiro de 2026
+Versão: 1.6 (Rota publica /master_calendar.ics sem cache)
+Data: 13 de agosto de 2026
 Desenvolvido por: PBrandão
 """
 
@@ -16,7 +16,7 @@ import subprocess
 from pathlib import Path
 from datetime import datetime, timedelta, date
 from typing import Dict, List, Tuple, Optional
-from flask import Flask, render_template, request, redirect, url_for, jsonify, session
+from flask import Flask, render_template, request, redirect, url_for, jsonify, session, send_file
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -26,7 +26,7 @@ from backend.notifier import EmailNotifier
 from backend.ics import ICSHandler
 from backend.manual_editor import ManualEditorHandler
 
-# ✅ v2.1: Lógica de Deteção de Caminho para Aplicação (Render vs. Local)
+# v2.1: Lógica de Deteção de Caminho para Aplicação (Render vs. Local)
 REPO_PATH = Path(REPO_DIR)
 APP_ROOT_PATH = REPO_PATH
 
@@ -51,9 +51,8 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
-
 logger = logging.getLogger(__name__)
-logger.info(f"REPO_PATH (para Git): {REPO_PATH}")
+logger.info(f"REPO_PATH (para Git/Disco): {REPO_PATH}")
 logger.info(f"APP_ROOT_PATH (para Flask): {APP_ROOT_PATH}")
 
 # Inicialização da App Flask
@@ -81,10 +80,10 @@ def login_page():
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '').strip()
-        
+
         if not username or not password:
             return render_template('login.html', error='Username e password obrigatórios'), 400
-        
+
         if AuthManager.authenticate(username, password):
             AuthManager.login(username)
             logger.info(f'Login bem-sucedido: {username}')
@@ -92,7 +91,7 @@ def login_page():
         else:
             logger.warning(f'Tentativa de login falhou: {username}')
             return render_template('login.html', error='Credenciais inválidas'), 401
-    
+
     return render_template('login.html')
 
 @app.route('/logout', methods=['GET', 'POST'])
@@ -102,6 +101,36 @@ def logout_page():
     AuthManager.logout()
     logger.info(f'Logout: {user}')
     return redirect(url_for('login_page'))
+
+# ============================================================================
+# ✅ NOVO: ROTA PÚBLICA DO MASTER CALENDAR (ICS)
+# ============================================================================
+
+@app.route('/master_calendar.ics', methods=['GET'])
+def serve_master_calendar():
+    """Serve o master_calendar.ics diretamente do disco persistente (REPO_DIR),
+    sempre sem cache, para refletir a sincronização mais recente
+    (manual ou automática via GitHub Actions).
+
+    URL final esperado: https://<nome-do-servico>.onrender.com/master_calendar.ics
+    """
+    file_path = Path(REPO_DIR) / "master_calendar.ics"
+
+    if not file_path.exists():
+        logger.warning(f"master_calendar.ics não encontrado em {file_path}")
+        return jsonify(error="master_calendar.ics não encontrado"), 404
+
+    response = send_file(
+        file_path,
+        mimetype='text/calendar',
+        as_attachment=False,
+        download_name='master_calendar.ics',
+        max_age=0
+    )
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 # ============================================================================
 # ROTAS PAGES (TEMPLATES)
@@ -138,7 +167,7 @@ def get_github_file_sha(filepath: str) -> Optional[str]:
         'Authorization': f'token {github_token}',
         'Accept': 'application/vnd.github.v3+json'
     }
-    
+
     try:
         response = requests.get(api_url, headers=headers, timeout=10)
         if response.status_code == 200:
@@ -156,8 +185,8 @@ def get_github_file_sha(filepath: str) -> Optional[str]:
         return None
 
 def download_github_file(filepath: str) -> bool:
-    """✅ NOVO v1.1: Descarrega ficheiro do GitHub para disco local.
-    
+    """Descarrega ficheiro do GitHub para disco local.
+
     Garante que manual_calendar.ics existe localmente antes do sync.
     """
     github_token = os.getenv('GITHUB_TOKEN')
@@ -168,23 +197,20 @@ def download_github_file(filepath: str) -> bool:
         'Authorization': f'token {github_token}',
         'Accept': 'application/vnd.github.v3+json'
     }
-    
+
     try:
         response = requests.get(api_url, headers=headers, timeout=10)
         if response.status_code == 200:
             content_base64 = response.json()['content']
             content_bytes = base64.b64decode(content_base64)
-            
-            # ✅ Tentar primeiro APP_ROOT_PATH (onde o sync.py procura)
+
             local_file_path = APP_ROOT_PATH / filepath
-            
-            # Se APP_ROOT_PATH não existir, usar REPO_PATH
             if not local_file_path.parent.exists():
                 local_file_path = REPO_PATH / filepath
-            
+
             with open(local_file_path, 'wb') as f:
                 f.write(content_bytes)
-            
+
             logger.info(f"GIT API: Ficheiro '{filepath}' descarregado com sucesso para {local_file_path}")
             return True
         elif response.status_code == 404:
@@ -199,21 +225,19 @@ def download_github_file(filepath: str) -> bool:
 
 def update_github_file(filepath: str, commit_message: str) -> bool:
     """Lê um ficheiro local e atualiza-o no GitHub via API.
-    
-    ✅ v2.2: Procura ficheiro em REPO_PATH e APP_ROOT_PATH (Render compatibility)
+
+    Procura ficheiro em REPO_PATH e APP_ROOT_PATH (Render compatibility)
     """
     github_token = os.getenv('GITHUB_TOKEN')
     github_owner = os.getenv('GITHUB_OWNER')
     github_repo = os.getenv('GITHUB_REPO')
 
-    # ✅ v2.2: Tentar primeiro REPO_PATH, depois APP_ROOT_PATH
     local_file_path = REPO_PATH / filepath
-    
-    # Se não existir em REPO_PATH, tentar em APP_ROOT_PATH (ambiente Render com /src)
+
     if not local_file_path.exists():
         local_file_path = APP_ROOT_PATH / filepath
         logger.info(f"GIT API: Ficheiro não encontrado em REPO_PATH, usando APP_ROOT_PATH: {local_file_path}")
-    
+
     if not local_file_path.exists():
         logger.error(f"GIT API: Ficheiro local '{local_file_path}' não encontrado para upload.")
         return False
@@ -277,12 +301,12 @@ def api_key_required(f):
         if not API_SECRET_KEY:
             logger.critical("API_SECRET_KEY não está configurada no ambiente!")
             return jsonify(error="Configuração de segurança do servidor incompleta"), 500
-        
+
         key = request.headers.get('X-API-Key')
         if key != API_SECRET_KEY:
             logger.warning(f"Acesso negado ao endpoint de API. Chave: {'presente' if key else 'ausente'}")
             return jsonify(error="Acesso não autorizado"), 401
-        
+
         return f(*args, **kwargs)
     return decorated_function
 
@@ -297,21 +321,21 @@ def api_sync():
     try:
         force_download = request.args.get('force', 'true').lower() == 'true'
         source = request.args.get('source', 'desconhecida')
-        
+
         logger.info('='*80)
         logger.info(f"API: Sincronização iniciada (via API Key) - Fonte: {source}")
         logger.info('='*80)
-        
+
         success = sync_calendars(force_download=force_download)
-        
+
         if success:
             logger.info("API: Sincronização local concluída. Atualizando GitHub...")
             update_github_file('import_calendar.ics', f'Auto-sync: import_calendar.ics (Fonte: {source})')
             update_github_file('master_calendar.ics', f'Auto-sync: master_calendar.ics (Fonte: {source})')
-            
+
             return jsonify(
                 status='success',
-                message='Sincronização completada e ficheiros atualizados no GitHub.',
+                message='Sincronização completada e ficheiros atualizados no GitHub e Render.',
                 timestamp=datetime.now().isoformat()
             ), 200
         else:
@@ -323,7 +347,7 @@ def api_sync():
                 message='Erro na sincronização',
                 timestamp=datetime.now().isoformat()
             ), 500
-            
+
     except Exception as e:
         logger.error('='*80)
         logger.error(f'API: Erro na sincronização: {e}', exc_info=True)
@@ -342,30 +366,28 @@ def api_sync_manual():
     try:
         user = AuthManager.get_current_user()
         should_notify = request.args.get('notify', 'true').lower() == 'true'
-        
+
         logger.info('='*80)
         logger.info(f"API: Sincronização MANUAL iniciada por utilizador: {user} | Notificar: {should_notify}")
         logger.info('='*80)
-        
-        # ✅ CORREÇÃO CRÍTICA: Descarregar sempre o manual_calendar.ics mais recente do Git
+
         logger.info("API: A descarregar 'manual_calendar.ics' do GitHub para garantir que está atualizado...")
         download_github_file('manual_calendar.ics')
-        
-        # Forçar download para garantir que os calendários externos estão atualizados
+
         success = sync_calendars(force_download=True)
-        
+
         if success:
             logger.info("API: Sincronização manual concluída. Atualizando GitHub...")
             update_github_file('import_calendar.ics', f'Manual sync: import_calendar.ics (User: {user})')
             update_github_file('master_calendar.ics', f'Manual sync: master_calendar.ics (User: {user})')
-            
+
             if should_notify:
                 logger.info("Enviando notificação de sucesso...")
                 notifier.send_success(total_events=0, reserved_count=0)
-            
+
             return jsonify(
                 status='success',
-                message='Sincronização completada e ficheiros atualizados no GitHub.',
+                message='Sincronização completada e ficheiros atualizados no GitHub e Render.',
                 timestamp=datetime.now().isoformat()
             ), 200
         else:
@@ -377,7 +399,7 @@ def api_sync_manual():
                 message='Erro na sincronização',
                 timestamp=datetime.now().isoformat()
             ), 500
-            
+
     except Exception as e:
         logger.error('='*80)
         logger.error(f'API: Erro na sincronização manual: {e}', exc_info=True)
@@ -397,27 +419,26 @@ def api_sync_manual():
 @api_login_required
 def api_calendar_import():
     """GET /api/calendar/import - FLUXO CRÍTICO COMPLETO
-    
-    ✅ v1.1: Descarrega manual_calendar.ics do GitHub antes do sync
+
+    Descarrega manual_calendar.ics do GitHub antes do sync
     """
     try:
         logger.info('='*80)
         logger.info('API: GET /api/calendar/import')
         logger.info('API: EXECUTANDO SYNC.PY + GIT (CRÍTICO)...')
         logger.info('='*80)
-        
-        # ✅ NOVO v1.1: Descarregar manual_calendar.ics do GitHub ANTES do sync
+
         logger.info('API: Descarregando manual_calendar.ics do GitHub...')
         download_github_file('manual_calendar.ics')
-        
+
         logger.info('API: Iniciando sync_calendars()...')
         sync_start = datetime.now()
-        
+
         try:
             sync_success = sync_calendars(force_download=True)
             sync_end = datetime.now()
             sync_duration = (sync_end - sync_start).total_seconds()
-            
+
             if sync_success:
                 logger.info(f'API: Sync.py concluído com SUCESSO ({sync_duration:.2f}s)')
             else:
@@ -425,20 +446,20 @@ def api_calendar_import():
         except Exception as sync_error:
             logger.error(f'API: Erro durante sync.py: {sync_error}', exc_info=True)
             logger.warning('API: Continuando mesmo com erro...')
-        
+
         logger.info('API: Sincronização local concluída. Atualizando GitHub...')
         update_github_file('import_calendar.ics', 'Calendar import: import_calendar.ics')
         update_github_file('master_calendar.ics', 'Calendar import: master_calendar.ics')
-        
+
         logger.info('API: Carregando import_calendar.ics ATUALIZADO...')
         editor = ManualEditorHandler()
         events = editor.load_import_events()
-        
+
         logger.info(f'API: Carregados {len(events)} eventos do import_calendar.ics')
         logger.info('='*80)
-        
+
         return jsonify(events), 200
-        
+
     except Exception as e:
         logger.error('='*80)
         logger.error(f'API: ERRO ao carregar import: {e}', exc_info=True)
@@ -467,70 +488,70 @@ def api_calendar_save():
         data = request.get_json()
         added = data.get('added', [])
         removed = data.get('removed', [])
-        
+
         logger.info('='*80)
         logger.info(f'API: POST /api/calendar/save - {len(added)} adições, {len(removed)} remoções')
         logger.info('='*80)
-        
+
         editor = ManualEditorHandler()
-        
+
         block_intervals = [e for e in added if e['category'] == 'MANUAL-BLOCK' and 'startDate' in e]
         block_dates_single = [e['date'] for e in added if e['category'] == 'MANUAL-BLOCK' and 'date' in e]
-        
+
         if block_intervals:
             logger.info(f'API: Bloqueando {len(block_intervals)} intervalo(s)')
             for interval in block_intervals:
                 editor.block_date_range(interval['startDate'], interval['endDate'])
-        
+
         if block_dates_single:
             logger.info(f'API: Bloqueando {len(block_dates_single)} data(s) individual(is)')
             editor.block_dates(block_dates_single)
-        
+
         remove_intervals = [e for e in added if e['category'] == 'MANUAL-REMOVE' and 'startDate' in e]
         remove_dates_single = [e['date'] for e in added if e['category'] == 'MANUAL-REMOVE' and 'date' in e]
-        
+
         if remove_intervals:
             logger.info(f'API: Removendo {len(remove_intervals)} intervalo(s)')
             for interval in remove_intervals:
                 editor.remove_event_range(interval['startDate'], interval['endDate'])
-        
+
         if remove_dates_single:
             logger.info(f'API: Removendo eventos em {len(remove_dates_single)} data(s) individual(is)')
             editor.remove_events(remove_dates_single)
-        
+
         if removed:
             logger.info(f'API: Limpando {len(removed)} eventos manuais')
             editor.clear_events(removed)
-        
+
         if not editor.save_manual_calendar():
             logger.error('API: Erro ao guardar manual_calendar.ics')
             return jsonify(success=False, message='Erro ao guardar manual_calendar.ics'), 500
-        
+
         logger.info("API: manual_calendar.ics guardado localmente. Atualizando no GitHub...")
         user = AuthManager.get_current_user() or 'unknown'
         git_success_manual = update_github_file('manual_calendar.ics', f'Editor manual: {user}')
-        
+
         logger.info("API: Re-sincronizar para atualizar master_calendar.ics...")
         sync_success = sync_calendars(force_download=False)
-        
+
         if not sync_success:
             logger.error('API: Erro ao re-sincronizar calendários após guardar alterações manuais.')
-        
+
         logger.info("API: Sincronização local concluída. Atualizando master no GitHub...")
         git_success_master = update_github_file('master_calendar.ics', f'Update master por editor manual (User: {user})')
-        
+
         logger.info('='*80)
-        
+
         return jsonify(
             success=True,
-            message='Alterações guardadas e calendários sincronizados com sucesso no GitHub.',
+            message='Alterações guardadas e calendários sincronizados com sucesso no GitHub e Render.',
             events_added=len(added),
             events_removed=len(removed),
             git_synced=git_success_manual and git_success_master,
             sync_success=sync_success,
             timestamp=datetime.now().isoformat()
         ), 200
-        
+
     except Exception as e:
         logger.error('='*80)
         logger.error(f'API: Erro ao guardar: {e}', exc_info=True)
@@ -552,36 +573,31 @@ def api_calendar_nights():
     try:
         logger.info('API: GET /api/calendar/nights a partir do master_calendar.ics')
 
-        # O master_calendar.ics é a fonte de verdade final
         master_events = ICSHandler.read_ics_file('master_calendar.ics') or []
-        
+
         logger.info(f'API: Carregados {len(master_events)} eventos do master_calendar.ics')
-        
-        # Gerar um mapa de noites inicial com todos os dias como disponíveis
-        final_nights: Dict[str, Dict[str, Any]] = {}
+
+        final_nights: Dict[str, Dict] = {}
         today = date.today()
         start_date = today - timedelta(days=365)
-        end_date = today + timedelta(days=730) # 2 anos para o futuro
+        end_date = today + timedelta(days=730)
         current = start_date
         while current <= end_date:
             final_nights[current.isoformat()] = {'category': 'AVAILABLE', 'description': 'Disponível', 'uid': ''}
             current += timedelta(days=1)
 
-        # Converter eventos do master para o formato de noites e sobrepor
         master_nights = convert_events_to_nights(master_events)
-        
-        # Sobrepor os dias disponíveis com os eventos do master
         final_nights.update(master_nights)
 
         logger.info(f'API: {len(final_nights)} noites finais para enviar ao frontend')
-        
+
         return jsonify(
             success=True,
             data=final_nights,
             count=len(final_nights),
             timestamp=datetime.now().isoformat()
         ), 200
-        
+
     except Exception as e:
         logger.error(f'API: Erro ao converter noites do master_calendar: {e}', exc_info=True)
         return jsonify(
@@ -600,18 +616,18 @@ def api_events():
     """GET /api/events - Retorna eventos para renderização no calendário"""
     try:
         logger.info('API: GET /api/events')
-        
+
         import_events = ICSHandler.read_ics_file('import_calendar.ics') or []
         manual_events = ICSHandler.read_ics_file('manual_calendar.ics') or []
-        
+
         logger.info(f'API: Carregados {len(import_events)} eventos (import) + {len(manual_events)} eventos (manual)')
-        
+
         import_nights = convert_events_to_nights(import_events)
         manual_nights = convert_events_to_nights(manual_events)
         final_nights = apply_night_overlay_rules(import_nights, manual_nights)
-        
+
         logger.info(f'API: {len(final_nights)} noites finais')
-        
+
         COLORMAP = {
             'RESERVATION': '#ff0000',
             'PREP-TIME': '#ffaa00',
@@ -619,36 +635,36 @@ def api_events():
             'MANUAL-REMOVE': '#ffff00',
             'AVAILABLE': '#4dd9ff'
         }
-        
+
         events_list = []
         processed = set()
         all_events = import_events + manual_events
-        
+
         for event in all_events:
             event_id = (
                 event.get('dtstart'),
                 event.get('dtend'),
                 event.get('categories', 'AVAILABLE')
             )
-            
+
             if event_id in processed:
                 continue
-            
+
             processed.add(event_id)
-            
+
             dtstart = event.get('dtstart')
             dtend = event.get('dtend')
             category = event.get('categories', 'AVAILABLE')
             summary = event.get('summary', 'Event')
-            
+
             if isinstance(dtstart, str):
                 dtstart = f"{dtstart[:4]}-{dtstart[4:6]}-{dtstart[6:8]}"
-            
+
             if isinstance(dtend, str):
                 dtend = f"{dtend[:4]}-{dtend[4:6]}-{dtend[6:8]}"
-            
+
             color = COLORMAP.get(category, '#4dd9ff')
-            
+
             events_list.append({
                 'summary': summary,
                 'start': dtstart,
@@ -656,16 +672,16 @@ def api_events():
                 'type': category,
                 'color': color
             })
-        
+
         logger.info(f'API: Retornando {len(events_list)} eventos formatados')
-        
+
         return jsonify(
             success=True,
             data=events_list,
             count=len(events_list),
             timestamp=datetime.now().isoformat()
         ), 200
-        
+
     except Exception as e:
         logger.error(f'API: Erro ao formatar eventos: {e}', exc_info=True)
         return jsonify(
@@ -695,21 +711,22 @@ def server_error(error):
 
 if __name__ == '__main__':
     logger.info('='*80)
-    logger.info('Iniciando Rental Calendar Sync API v1.5')
+    logger.info('Iniciando Rental Calendar Sync API v1.6')
     logger.info('='*80)
     logger.info(f'REPO_PATH: {REPO_PATH}')
     logger.info(f'STATIC_PATH: {STATIC_PATH}')
     logger.info(f'TEMPLATES_PATH: {TEMPLATES_PATH}')
     logger.info('='*80)
     logger.info('ENDPOINTS DISPONÍVEIS:')
-    logger.info('  GET  /api/calendar/import - Executa SYNC + Git push')
-    logger.info('  GET  /api/calendar/manual - Carrega manual_calendar.ics')
-    logger.info('  POST /api/calendar/save - Grava alterações + git push')
-    logger.info('  GET  /api/calendar/nights - Retorna NOITES consolidadas')
-    logger.info('  GET  /api/events - Eventos para barras visuais')
+    logger.info(' GET  /master_calendar.ics  - ICS público, sempre atualizado (sem cache)')
+    logger.info(' GET  /api/calendar/import  - Executa SYNC + Git push')
+    logger.info(' GET  /api/calendar/manual  - Carrega manual_calendar.ics')
+    logger.info(' POST /api/calendar/save    - Grava alterações + git push')
+    logger.info(' GET  /api/calendar/nights  - Retorna NOITES consolidadas')
+    logger.info(' GET  /api/events           - Eventos para barras visuais')
     logger.info('='*80)
-    
+
     debug_mode = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
     port = int(os.getenv('PORT', 8000))
-    
+
     app.run(host='0.0.0.0', port=port, debug=debug_mode, use_reloader=debug_mode)
